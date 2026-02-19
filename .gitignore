@@ -1,0 +1,7 @@
+Datasets/
+results/full_dataset.pkl
+results/sample_dataset.pkl
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store

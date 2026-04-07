@@ -1,0 +1,4 @@
+Model,Size (KB),Accuracy,F1_Attack,Target_Device
+Full (Server),2291.1,0.9709,0.9819,Cloud/Server
+Full ONNX,2025.9,0.9709,0.9819,Cloud/Server
+Edge ONNX (Pi),45.8,0.9656,0.9787,Raspberry Pi / IoT Gateway

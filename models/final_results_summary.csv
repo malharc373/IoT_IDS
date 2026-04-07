@@ -1,0 +1,9 @@
+Model,Accuracy,F1_Attack,Features,Datasets_trained_on
+Individual (CICIDS),0.99,0.99,78,1
+Individual (Bot-IoT),0.98,0.99,16,1
+Unified-2 (CICIDS),0.97,0.98,12,2
+Unified-2 (Bot-IoT),1.0,1.0,12,2
+Unified-3 (CICIDS),0.97,0.98,12,3
+Unified-3 (UNSWNB15),0.91,0.94,12,3
+Unified-3 (TONIoT),1.0,1.0,12,3
+Unified-3 on full UNSWNB15,0.93,0.95,12,3

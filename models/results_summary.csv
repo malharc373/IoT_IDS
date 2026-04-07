@@ -1,0 +1,6 @@
+Model,Accuracy,F1_Attack,Features
+CICIDS Individual,0.99,0.99,78
+BotIoT Individual,0.98,0.99,16
+Unified (CICIDS),0.97,0.98,12
+Unified (BotIoT),1.0,1.0,12
+Unified (Combined),0.98,0.99,12

@@ -7,3 +7,18 @@ __pycache__/
 .DS_Store
 # Large model files
 models/*.pkl
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Large model files
+*.pkl
+*.onnx
+
+# Datasets (too large)
+Datasets/

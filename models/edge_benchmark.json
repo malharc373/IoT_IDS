@@ -1,8 +1,10 @@
 {
-  "mean_ms": 0.0028,
-  "p99_ms": 0.0037,
-  "throughput": 353618,
-  "model_kb": 45.8,
-  "rpi4_ms": 0.04,
-  "rpi4_thr": 23574
+  "single_flow_latency_ms": 0.01,
+  "single_flow_p99_ms": 0.011,
+  "single_flow_throughput_rps": 103659,
+  "batch64_latency_ms": 0.025,
+  "batch64_throughput_rps": 2555137,
+  "onnx_size_kb": 45,
+  "full_model_size_kb": 404,
+  "size_reduction_pct": 88.9
 }

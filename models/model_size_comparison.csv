@@ -1,0 +1,4 @@
+Model,Size_KB,Reduction_pct
+xgb_unified_4dataset.pkl,404,0.0
+xgb_edge.pkl,37,90.8
+xgb_edge.onnx,45,88.9

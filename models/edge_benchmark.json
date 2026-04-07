@@ -1,12 +1,8 @@
 {
-    "benchmark_environment": "Apple Silicon M-series (simulated edge)",
-    "measured_mean_latency_ms": 0.0074,
-    "measured_median_latency_ms": 0.0048,
-    "measured_p99_latency_ms": 0.0163,
-    "measured_throughput_per_sec": 135604,
-    "model_size_kb": 45.8,
-    "rpi4_multiplier": 15,
-    "projected_latency_ms": 0.11,
-    "projected_throughput_per_sec": 9040,
-    "projected_platform": "Raspberry Pi 4 (ARM Cortex-A72, 1.5GHz)"
+  "mean_ms": 0.0028,
+  "p99_ms": 0.0037,
+  "throughput": 353618,
+  "model_kb": 45.8,
+  "rpi4_ms": 0.04,
+  "rpi4_thr": 23574
 }

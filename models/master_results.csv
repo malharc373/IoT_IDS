@@ -1,10 +1,6 @@
-Experiment,Accuracy,F1_Attack,Model_Size_KB,Features
-Individual — CICIDS2017,0.99,0.99,,78
-Individual — Bot-IoT,0.98,0.99,,16
-Unified-2 — CICIDS test,0.97,0.98,2291.0,12
-Unified-2 — UNSWNB15 (unseen),0.35,0.0,2291.0,12
-Unified-3 — CICIDS test,0.97,0.98,2291.0,12
-Unified-3 — UNSWNB15 test,0.91,0.94,2291.0,12
-Unified-3 — TONIoT test,1.0,1.0,2291.0,12
-Unified-3 — UNSWNB15 full,0.93,0.95,2291.0,12
-Edge ONNX — Combined test,0.9656,0.9787,45.8,12
+Experiment,Accuracy,Features
+Baseline CICIDS2017,0.9836,78
+Baseline UNSW-NB15 (unseen),0.3609,78
+Unified SFAF CICIDS2017,0.9833,12
+Unified SFAF UNSW-NB15,0.9268,12
+Unified SFAF TON-IoT,0.9941,12

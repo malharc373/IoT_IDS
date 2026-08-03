@@ -1,0 +1,375 @@
+"""
+flow_features.py — shared flow-feature extraction for IoT-IDS.
+
+This is the SINGLE SOURCE OF TRUTH for how raw packets become the feature
+vector fed to the model.  The trainer, the offline pcap classifier, and the
+live sniffer daemon all import from here, which guarantees zero train/serve
+skew.
+
+Pipeline:
+    raw packet bytes ──parse_raw()──▶ normalized packet dict
+    normalized dict  ──FlowTable──▶ bidirectional flow records
+    flow record      ──features()──▶ 21-dim float vector (FEATURE_NAMES)
+
+The 21 features are chosen to make different attack classes separable:
+  * flow-level shape/rate/flag stats catch floods and malformed flows
+  * host-context rolling stats (distinct dst ports / IPs per source) catch
+    reconnaissance (port scans) that is invisible at the single-flow level.
+
+No third-party dependency is required for parsing (pure struct), so this file
+runs unchanged on a Raspberry Pi.
+"""
+from __future__ import annotations
+
+import math
+import socket
+import struct
+import collections
+from typing import Dict, Iterable, List, Optional
+
+# ── Protocol numbers ──────────────────────────────────────────────────────────
+PROTO_ICMP = 1
+PROTO_TCP = 6
+PROTO_UDP = 17
+
+# TCP flag bit masks
+FIN = 0x01
+SYN = 0x02
+RST = 0x04
+PSH = 0x08
+ACK = 0x10
+URG = 0x20
+
+# Rolling window (seconds) used for host-context features.
+HOST_WINDOW_S = 60.0
+
+# ── Feature vector definition (ORDER MATTERS — do not reorder) ────────────────
+FEATURE_NAMES: List[str] = [
+    "proto",                # 6 TCP / 17 UDP / 1 ICMP / 0 other
+    "duration",             # flow lifetime (s)
+    "tot_pkts",             # total packets both directions
+    "tot_bytes",            # total bytes both directions
+    "pkts_per_sec",         # packet rate
+    "bytes_per_sec",        # byte rate
+    "mean_pkt_len",         # mean packet size
+    "std_pkt_len",          # std packet size
+    "min_pkt_len",          # smallest packet
+    "max_pkt_len",          # largest packet
+    "mean_iat",             # mean inter-arrival time
+    "std_iat",              # std inter-arrival time
+    "syn_ratio",            # SYN packets / total (TCP)
+    "fin_ratio",            # FIN packets / total
+    "rst_ratio",            # RST packets / total
+    "ack_ratio",            # ACK packets / total
+    "fwd_bwd_pkt_ratio",    # fwd_pkts / (bwd_pkts+1) — asymmetry
+    "down_up_bytes_ratio",  # bwd_bytes / (fwd_bytes+1)
+    "host_dst_ports",       # distinct dst ports this src hit in window
+    "host_dst_ips",         # distinct dst IPs this src hit in window
+    "host_flow_count",      # flows opened by this src in window
+]
+N_FEATURES = len(FEATURE_NAMES)
+
+
+# ── Packet parsing ────────────────────────────────────────────────────────────
+def parse_raw(raw: bytes) -> Optional[dict]:
+    """Ethernet → IPv4 → TCP/UDP/ICMP. Returns a normalized dict or None."""
+    if len(raw) < 14:
+        return None
+    eth_type = struct.unpack("!H", raw[12:14])[0]
+    # Handle a single 802.1Q VLAN tag transparently.
+    offset = 14
+    if eth_type == 0x8100:
+        if len(raw) < 18:
+            return None
+        eth_type = struct.unpack("!H", raw[16:18])[0]
+        offset = 18
+    if eth_type != 0x0800:  # IPv4 only
+        return None
+    ip = raw[offset:]
+    if len(ip) < 20:
+        return None
+    ihl = (ip[0] & 0x0F) * 4
+    if ihl < 20 or len(ip) < ihl:
+        return None
+    proto = ip[9]
+    src_ip = socket.inet_ntoa(ip[12:16])
+    dst_ip = socket.inet_ntoa(ip[16:20])
+    payload = ip[ihl:]
+
+    src_port = dst_port = 0
+    flags = 0
+    if proto == PROTO_TCP and len(payload) >= 14:
+        src_port, dst_port = struct.unpack("!HH", payload[0:4])
+        flags = payload[13] & 0x3F
+    elif proto == PROTO_UDP and len(payload) >= 8:
+        src_port, dst_port = struct.unpack("!HH", payload[0:4])
+    elif proto == PROTO_ICMP:
+        src_port = dst_port = 0
+
+    return {
+        "src_ip": src_ip,
+        "dst_ip": dst_ip,
+        "src_port": src_port,
+        "dst_port": dst_port,
+        "proto": proto,
+        "length": len(raw),
+        "flags": flags,
+    }
+
+
+def normalize_scapy(pkt) -> Optional[dict]:
+    """Convert a scapy packet to the same normalized dict used everywhere.
+
+    Imported lazily so this module has no hard scapy dependency for offline use.
+    """
+    try:
+        from scapy.layers.inet import IP, TCP, UDP, ICMP
+    except Exception:
+        return None
+    if IP not in pkt:
+        return None
+    ip = pkt[IP]
+    proto = ip.proto
+    src_port = dst_port = 0
+    flags = 0
+    if TCP in pkt:
+        t = pkt[TCP]
+        src_port, dst_port = int(t.sport), int(t.dport)
+        flags = int(t.flags) & 0x3F
+        proto = PROTO_TCP
+    elif UDP in pkt:
+        u = pkt[UDP]
+        src_port, dst_port = int(u.sport), int(u.dport)
+        proto = PROTO_UDP
+    elif ICMP in pkt:
+        proto = PROTO_ICMP
+    return {
+        "src_ip": ip.src,
+        "dst_ip": ip.dst,
+        "src_port": src_port,
+        "dst_port": dst_port,
+        "proto": int(proto),
+        "length": len(pkt),
+        "flags": flags,
+    }
+
+
+# ── pcap reader (classic little/big-endian .pcap; no pcapng) ──────────────────
+def read_pcap(filename: str) -> List[tuple]:
+    """Yield (ts, raw_bytes) list from a classic .pcap file (struct-only)."""
+    out = []
+    with open(filename, "rb") as f:
+        hdr = f.read(24)
+        if len(hdr) < 24:
+            return out
+        magic = struct.unpack("<I", hdr[:4])[0]
+        endian = "<" if magic in (0xA1B2C3D4, 0xA1B23C4D) else ">"
+        while True:
+            rec = f.read(16)
+            if len(rec) < 16:
+                break
+            ts_sec, ts_usec, incl_len, orig_len = struct.unpack(endian + "IIII", rec)
+            raw = f.read(incl_len)
+            if len(raw) < incl_len:
+                break
+            out.append((ts_sec + ts_usec / 1e6, raw))
+    return out
+
+
+# ── Flow record ───────────────────────────────────────────────────────────────
+class Flow:
+    __slots__ = (
+        "src_ip", "dst_ip", "src_port", "dst_port", "proto",
+        "ts_start", "ts_end", "last_ts",
+        "fwd_pkts", "bwd_pkts", "fwd_bytes", "bwd_bytes",
+        "lengths", "iats",
+        "syn", "fin", "rst", "ack",
+    )
+
+    def __init__(self, pkt, ts):
+        # forward direction = whoever sent the first packet
+        self.src_ip = pkt["src_ip"]
+        self.dst_ip = pkt["dst_ip"]
+        self.src_port = pkt["src_port"]
+        self.dst_port = pkt["dst_port"]
+        self.proto = pkt["proto"]
+        self.ts_start = ts
+        self.ts_end = ts
+        self.last_ts = ts
+        self.fwd_pkts = 0
+        self.bwd_pkts = 0
+        self.fwd_bytes = 0
+        self.bwd_bytes = 0
+        self.lengths: List[int] = []
+        self.iats: List[float] = []
+        self.syn = self.fin = self.rst = self.ack = 0
+
+    def update(self, pkt, ts, forward: bool):
+        if ts > self.last_ts:
+            self.iats.append(ts - self.last_ts)
+        self.last_ts = ts
+        self.ts_end = ts
+        self.lengths.append(pkt["length"])
+        if forward:
+            self.fwd_pkts += 1
+            self.fwd_bytes += pkt["length"]
+        else:
+            self.bwd_pkts += 1
+            self.bwd_bytes += pkt["length"]
+        fl = pkt["flags"]
+        if fl & SYN:
+            self.syn += 1
+        if fl & FIN:
+            self.fin += 1
+        if fl & RST:
+            self.rst += 1
+        if fl & ACK:
+            self.ack += 1
+
+    @property
+    def tot_pkts(self) -> int:
+        return self.fwd_pkts + self.bwd_pkts
+
+    def features(self, host_ctx: dict) -> List[float]:
+        n = self.tot_pkts
+        dur = max(self.ts_end - self.ts_start, 1e-6)
+        lengths = self.lengths
+        mean_len = sum(lengths) / n if n else 0.0
+        var_len = sum((x - mean_len) ** 2 for x in lengths) / n if n else 0.0
+        std_len = math.sqrt(var_len)
+        min_len = min(lengths) if lengths else 0
+        max_len = max(lengths) if lengths else 0
+        if self.iats:
+            mean_iat = sum(self.iats) / len(self.iats)
+            var_iat = sum((x - mean_iat) ** 2 for x in self.iats) / len(self.iats)
+            std_iat = math.sqrt(var_iat)
+        else:
+            mean_iat = std_iat = 0.0
+        tot_bytes = self.fwd_bytes + self.bwd_bytes
+        return [
+            float(self.proto),
+            round(dur, 6),
+            float(n),
+            float(tot_bytes),
+            round(n / dur, 3),
+            round(tot_bytes / dur, 3),
+            round(mean_len, 3),
+            round(std_len, 3),
+            float(min_len),
+            float(max_len),
+            round(mean_iat, 6),
+            round(std_iat, 6),
+            round(self.syn / n, 4) if n else 0.0,
+            round(self.fin / n, 4) if n else 0.0,
+            round(self.rst / n, 4) if n else 0.0,
+            round(self.ack / n, 4) if n else 0.0,
+            round(self.fwd_pkts / (self.bwd_pkts + 1), 4),
+            round(self.bwd_bytes / (self.fwd_bytes + 1), 4),
+            float(host_ctx["dst_ports"]),
+            float(host_ctx["dst_ips"]),
+            float(host_ctx["flow_count"]),
+        ]
+
+
+# ── Flow table ────────────────────────────────────────────────────────────────
+def _flow_key(pkt):
+    """Canonical bidirectional key: sort the two endpoints so A→B and B→A map
+    to the same flow. Returns (key, forward_bool)."""
+    a = (pkt["src_ip"], pkt["src_port"])
+    b = (pkt["dst_ip"], pkt["dst_port"])
+    if a <= b:
+        return (a, b, pkt["proto"]), True
+    return (b, a, pkt["proto"]), False
+
+
+class FlowTable:
+    """Aggregates packets into bidirectional flows and computes host context.
+
+    Works for both batch (whole pcap) and streaming (live) use.
+    """
+
+    def __init__(self):
+        self.flows: Dict[tuple, Flow] = collections.OrderedDict()
+
+    def add_packet(self, pkt: dict, ts: float):
+        key, forward = _flow_key(pkt)
+        f = self.flows.get(key)
+        if f is None:
+            f = Flow(pkt, ts)
+            self.flows[key] = f
+        f.update(pkt, ts, forward)
+
+    # -- host context ----------------------------------------------------------
+    def _host_context(self, window: Optional[float] = None) -> Dict[str, dict]:
+        """For each source IP, distinct dst ports / dst IPs / flow count.
+        `window` limits to flows whose ts_end is within `window` s of the latest
+        packet (used live); None = use all flows (batch)."""
+        latest = max((f.ts_end for f in self.flows.values()), default=0.0)
+        per_src = collections.defaultdict(
+            lambda: {"dst_ports": set(), "dst_ips": set(), "flow_count": 0}
+        )
+        for f in self.flows.values():
+            if window is not None and (latest - f.ts_end) > window:
+                continue
+            # attribute host context to the flow *initiator* (fwd src)
+            rec = per_src[f.src_ip]
+            rec["dst_ports"].add(f.dst_port)
+            rec["dst_ips"].add(f.dst_ip)
+            rec["flow_count"] += 1
+        return {
+            ip: {
+                "dst_ports": len(v["dst_ports"]),
+                "dst_ips": len(v["dst_ips"]),
+                "flow_count": v["flow_count"],
+            }
+            for ip, v in per_src.items()
+        }
+
+    def extract(self, min_pkts: int = 1, window: Optional[float] = None):
+        """Return list of (flow_meta, feature_vector) for every flow."""
+        ctx = self._host_context(window=window)
+        out = []
+        for key, f in self.flows.items():
+            if f.tot_pkts < min_pkts:
+                continue
+            host = ctx.get(f.src_ip, {"dst_ports": 1, "dst_ips": 1, "flow_count": 1})
+            meta = {
+                "src": f"{f.src_ip}:{f.src_port}",
+                "dst": f"{f.dst_ip}:{f.dst_port}",
+                "proto": f.proto,
+                "pkts": f.tot_pkts,
+                "bytes": f.fwd_bytes + f.bwd_bytes,
+                "ts_start": f.ts_start,
+                "ts_end": f.ts_end,
+            }
+            out.append((meta, f.features(host)))
+        return out
+
+    def prune(self, older_than: float, now: float):
+        """Drop flows idle longer than `older_than` seconds (live memory cap)."""
+        dead = [k for k, f in self.flows.items() if (now - f.last_ts) > older_than]
+        for k in dead:
+            del self.flows[k]
+        return len(dead)
+
+
+# ── Convenience: pcap → features ──────────────────────────────────────────────
+def features_from_pcap(pcap_path: str, min_pkts: int = 1):
+    """Parse a .pcap and return (meta, vector) list. Batch/host-context = all."""
+    table = FlowTable()
+    for ts, raw in read_pcap(pcap_path):
+        pkt = parse_raw(raw)
+        if pkt is not None:
+            table.add_packet(pkt, ts)
+    return table.extract(min_pkts=min_pkts, window=None)
+
+
+if __name__ == "__main__":
+    import sys, json
+    if len(sys.argv) < 2:
+        print("usage: python flow_features.py <capture.pcap>")
+        raise SystemExit(1)
+    rows = features_from_pcap(sys.argv[1])
+    print(f"Flows: {len(rows)}  |  Features/flow: {N_FEATURES}")
+    for meta, vec in rows[:5]:
+        print(json.dumps(meta), "->", [round(x, 3) for x in vec])

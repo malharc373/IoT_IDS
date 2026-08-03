@@ -1,0 +1,55 @@
+{
+  "model": "live_ids",
+  "type": "xgboost-multiclass",
+  "features": [
+    "proto",
+    "duration",
+    "tot_pkts",
+    "tot_bytes",
+    "pkts_per_sec",
+    "bytes_per_sec",
+    "mean_pkt_len",
+    "std_pkt_len",
+    "min_pkt_len",
+    "max_pkt_len",
+    "mean_iat",
+    "std_iat",
+    "syn_ratio",
+    "fin_ratio",
+    "rst_ratio",
+    "ack_ratio",
+    "fwd_bwd_pkt_ratio",
+    "down_up_bytes_ratio",
+    "host_dst_ports",
+    "host_dst_ips",
+    "host_flow_count"
+  ],
+  "n_features": 21,
+  "labels": {
+    "0": "benign",
+    "1": "portscan",
+    "2": "synflood",
+    "3": "icmpflood",
+    "4": "udpflood",
+    "5": "ssh_bruteforce",
+    "6": "slowloris"
+  },
+  "attack_labels": [
+    "portscan",
+    "synflood",
+    "icmpflood",
+    "udpflood",
+    "ssh_bruteforce",
+    "slowloris"
+  ],
+  "onnx_input": "input",
+  "metrics": {
+    "multiclass_accuracy": 1.0,
+    "macro_f1": 1.0,
+    "binary_accuracy": 1.0,
+    "binary_f1_attack": 1.0
+  },
+  "cap_per_class": 8000,
+  "n_train": 22970,
+  "n_test": 5743
+}

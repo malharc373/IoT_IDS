@@ -22,3 +22,25 @@ models/*.pkl
 
 # Datasets (too large)
 Datasets/
+data/pcaps/
+data/processed/
+
+# Runtime output
+logs/
+demo/results/*_flows.csv
+
+# Python caches / OS cruft (bulletproof, any depth)
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/.DS_Store
+*.tmp
+*.log
+
+# ── Exceptions: small, deploy-critical artifacts that MUST be committed ──
+# These are tiny (KB-scale) and are required to run the IDS on the edge device.
+!models/live_ids.onnx
+!models/live_meta.json
+!models/xgb_edge.onnx
+!models/scaler_unified_4dataset.pkl
+!models/edge_meta.json

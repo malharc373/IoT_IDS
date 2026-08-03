@@ -1,0 +1,10 @@
+# IoT-IDS — minimal Raspberry Pi *runtime* dependencies (inference only).
+# No training libs (xgboost/sklearn/skl2onnx) needed on the edge device —
+# the model ships as a self-contained ONNX file.
+#
+# All of these have prebuilt aarch64 (64-bit Raspberry Pi OS) wheels.
+
+numpy>=1.24,<3
+onnxruntime>=1.17
+scapy>=2.5
+joblib>=1.3

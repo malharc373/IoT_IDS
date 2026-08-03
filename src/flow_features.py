@@ -66,6 +66,7 @@ FEATURE_NAMES: List[str] = [
     "host_dst_ports",       # distinct dst ports this src hit in window
     "host_dst_ips",         # distinct dst IPs this src hit in window
     "host_flow_count",      # flows opened by this src in window
+    "dst_port",             # service port the initiator targeted (23/1883/53/…)
 ]
 N_FEATURES = len(FEATURE_NAMES)
 
@@ -268,6 +269,7 @@ class Flow:
             float(host_ctx["dst_ports"]),
             float(host_ctx["dst_ips"]),
             float(host_ctx["flow_count"]),
+            float(self.dst_port),
         ]
 
 

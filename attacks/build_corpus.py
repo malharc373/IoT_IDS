@@ -50,8 +50,17 @@ def build(scenarios: int, out_dir: str, pcap_dir: str):
         label = tg.LABELS[kind]
         binary = 0 if kind == "benign" else 1
         n_flows_total = 0
-        for s in range(scenarios):
-            pkts = tg.generate(kind, seed=1000 * tg.LABELS[kind] + s)
+        # benign yields fewer flows/scenario, so oversample it for balance
+        n_scen = scenarios * 5 if kind == "benign" else scenarios
+        for s in range(n_scen):
+            # the benign label is a family: rotate through plain + hard-benign
+            # variants so the model sees legitimate traffic that resembles
+            # attacks (bursty transfers, multi-endpoint telemetry).
+            if kind == "benign":
+                variant = tg.BENIGN_VARIANTS[s % len(tg.BENIGN_VARIANTS)]
+                pkts = tg.generate(variant, seed=1000 * tg.LABELS[kind] + s)
+            else:
+                pkts = tg.generate(kind, seed=1000 * tg.LABELS[kind] + s)
             if s == 0:
                 wrpcap(os.path.join(pcap_dir, f"{kind}_sample.pcap"), pkts)
             for meta, vec in _flows_from_packets(pkts):
@@ -83,9 +92,9 @@ def _build_demo_mixed(pcap_dir: str):
     # Distinct seeds per stream so each attacker/host gets its own IPs — mixing
     # the same seed collides source IPs and corrupts host-context features.
     pkts += tg.generate("benign", seed=7007)
-    pkts += tg.generate("benign", seed=8008)
-    for i, kind in enumerate(["portscan", "synflood", "icmpflood", "udpflood",
-                              "ssh_bruteforce", "slowloris"]):
+    pkts += tg.generate("benign_burst", seed=8008)
+    pkts += tg.generate("benign_multi", seed=8123)
+    for i, kind in enumerate([k for k in tg.ATTACK_KINDS if k != "benign"]):
         pkts += tg.generate(kind, seed=90001 + i * 137)
     pkts += tg.generate("benign", seed=9009)
     pkts.sort(key=lambda x: float(x.time))

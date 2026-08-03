@@ -22,9 +22,10 @@
     "down_up_bytes_ratio",
     "host_dst_ports",
     "host_dst_ips",
-    "host_flow_count"
+    "host_flow_count",
+    "dst_port"
   ],
-  "n_features": 21,
+  "n_features": 22,
   "labels": {
     "0": "benign",
     "1": "portscan",
@@ -32,7 +33,22 @@
     "3": "icmpflood",
     "4": "udpflood",
     "5": "ssh_bruteforce",
-    "6": "slowloris"
+    "6": "slowloris",
+    "7": "mirai",
+    "8": "xmas_scan",
+    "9": "mqtt_flood"
+  },
+  "categories": {
+    "benign": "benign",
+    "portscan": "recon",
+    "synflood": "dos",
+    "icmpflood": "dos",
+    "udpflood": "dos",
+    "ssh_bruteforce": "bruteforce",
+    "slowloris": "dos",
+    "mirai": "botnet",
+    "xmas_scan": "recon",
+    "mqtt_flood": "dos"
   },
   "attack_labels": [
     "portscan",
@@ -40,7 +56,59 @@
     "icmpflood",
     "udpflood",
     "ssh_bruteforce",
-    "slowloris"
+    "slowloris",
+    "mirai",
+    "xmas_scan",
+    "mqtt_flood"
+  ],
+  "num_class": 10,
+  "scaler_mean": [
+    7.622883,
+    2.338807,
+    8.77586,
+    5069.924832,
+    507462.272219,
+    134797432.55077,
+    189.974879,
+    28.243148,
+    163.198279,
+    239.434575,
+    0.104722,
+    0.118503,
+    0.454191,
+    0.099657,
+    0.08278,
+    0.307825,
+    1.191468,
+    330.720278,
+    117.233541,
+    37.521444,
+    616.514865,
+    2458.827331
+  ],
+  "scaler_scale": [
+    4.066508,
+    15.986638,
+    51.02511,
+    45197.117643,
+    499381.152149,
+    300938230.05068,
+    298.166634,
+    95.680618,
+    290.272613,
+    370.556076,
+    0.670719,
+    0.78256,
+    0.404406,
+    0.284492,
+    0.180148,
+    0.348477,
+    7.612571,
+    3207.02319,
+    190.33192,
+    94.518836,
+    592.114537,
+    2749.796868
   ],
   "onnx_input": "input",
   "metrics": {
@@ -50,6 +118,6 @@
     "binary_f1_attack": 1.0
   },
   "cap_per_class": 8000,
-  "n_train": 22970,
-  "n_test": 5743
+  "n_train": 43928,
+  "n_test": 10982
 }

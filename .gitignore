@@ -29,6 +29,14 @@ data/processed/
 logs/
 demo/results/*_flows.csv
 
+# Python caches / OS cruft (bulletproof, any depth)
+**/__pycache__/
+*.py[cod]
+**/.pytest_cache/
+**/.DS_Store
+*.tmp
+*.log
+
 # ── Exceptions: small, deploy-critical artifacts that MUST be committed ──
 # These are tiny (KB-scale) and are required to run the IDS on the edge device.
 !models/live_ids.onnx

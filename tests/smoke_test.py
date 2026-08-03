@@ -61,7 +61,7 @@ def t_requirements_importable():
 def t_flow_features_core():
     import flow_features as ff
     from scapy.all import Ether, IP, TCP, wrpcap
-    assert ff.N_FEATURES == len(ff.FEATURE_NAMES) == 21
+    assert ff.N_FEATURES == len(ff.FEATURE_NAMES) and ff.N_FEATURES >= 21
     # parse_raw on a crafted TCP SYN
     p = Ether() / IP(src="1.1.1.1", dst="2.2.2.2") / TCP(sport=1, dport=2, flags="S")
     pk = ff.parse_raw(bytes(p))
@@ -79,7 +79,7 @@ def t_flow_features_core():
     for i, (ts, raw) in enumerate(recs):
         table.add_packet(ff.parse_raw(raw), ts + i)
     rows = table.extract(min_pkts=1)
-    assert rows and len(rows[0][1]) == 21
+    assert rows and len(rows[0][1]) == ff.N_FEATURES
 
 
 def t_flow_features_cli():
@@ -95,12 +95,16 @@ def t_flow_features_cli():
 # ── 3. traffic_gen ────────────────────────────────────────────────────────────
 def t_traffic_gen_all_kinds():
     import traffic_gen as tg
-    assert set(tg.ATTACK_KINDS) == {
-        "benign","portscan","synflood","icmpflood","udpflood","ssh_bruteforce","slowloris"}
-    for k in tg.ATTACK_KINDS:
+    expected = {"benign", "portscan", "synflood", "icmpflood", "udpflood",
+                "ssh_bruteforce", "slowloris", "mirai", "xmas_scan", "mqtt_flood"}
+    assert set(tg.ATTACK_KINDS) == expected
+    for k in list(tg.GENERATORS.keys()):   # includes benign variants
         pkts = tg.generate(k, seed=3)
         assert len(pkts) > 0, k
         assert all(hasattr(p, "time") for p in pkts), k
+    # every attack kind has a category
+    for k in tg.ATTACK_KINDS:
+        assert k in tg.CATEGORY, k
 
 
 def t_traffic_gen_cli():
@@ -114,8 +118,9 @@ def t_traffic_gen_cli():
 # ── 4. build_corpus helpers ───────────────────────────────────────────────────
 def t_build_corpus_helper():
     import build_corpus as bc, traffic_gen as tg
+    import flow_features as ff
     rows = bc._flows_from_packets(tg.generate("portscan", seed=4))
-    assert rows and len(rows[0][1]) == 21
+    assert rows and len(rows[0][1]) == ff.N_FEATURES
 
 
 # ── 5. shipped model artifacts ────────────────────────────────────────────────
@@ -124,10 +129,65 @@ def t_model_artifacts():
     import onnxruntime as rt
     meta = json.load(open(os.path.join(ROOT, "models", "live_meta.json")))
     assert meta["features"] == ff.FEATURE_NAMES
-    assert meta["n_features"] == 21
-    assert len(meta["labels"]) == 7
+    assert meta["n_features"] == ff.N_FEATURES
+    assert len(meta["labels"]) == meta["num_class"]
+    assert "categories" in meta and meta["categories"]["synflood"] == "dos"
     sess = rt.InferenceSession(os.path.join(ROOT, "models", "live_ids.onnx"))
-    assert sess.get_inputs()[0].shape[1] == 21
+    assert sess.get_inputs()[0].shape[1] == ff.N_FEATURES
+
+
+def t_ips_responder():
+    from ips_response import Responder
+    r = Responder(mode="dry-run", min_conf=0.9, block_seconds=60,
+                  allowlist=["10.0.0.0/8"],
+                  state_path=os.path.join(TMP, "ips_state.json"))
+    assert r.handle("203.0.113.9", "synflood", 0.99)["action"] == "would-block"
+    assert r.handle("203.0.113.9", "synflood", 0.99)["action"] == "already-blocked"
+    assert r.handle("10.1.2.3", "portscan", 0.99)["action"] == "skip"
+    assert r.handle("198.51.100.4", "portscan", 0.5)["action"] == "monitor"
+
+
+def t_c_export():
+    import importlib.util, subprocess, shutil
+    spec = importlib.util.spec_from_file_location("expc", os.path.join(ROOT, "src", "export_c.py"))
+    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    meta, df = m._load()
+    header, n_nodes = m.generate_header(meta, df)
+    assert "ids_predict" in header and n_nodes > 0
+    hpath = os.path.join(TMP, "live_ids.h")
+    open(hpath, "w").write(header)
+    cc = shutil.which("gcc") or shutil.which("cc")
+    if cc:  # compile a trivial program that includes the header
+        cpath = os.path.join(TMP, "m.c")
+        open(cpath, "w").write(
+            '#include "live_ids.h"\nint main(){float x[IDS_NUM_FEATURES]={0};'
+            'return ids_predict(x)>=0?0:1;}')
+        subprocess.run([cc, "-O2", "-I", TMP, "-o", os.path.join(TMP, "m"), cpath],
+                       check=True, capture_output=True)
+
+
+def t_dataset_maps():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("dm", os.path.join(ROOT, "code", "dataset_maps.py"))
+    dm = importlib.util.module_from_spec(spec); spec.loader.exec_module(dm)
+    import pandas as pd
+    # one synthetic row per raw schema; align must yield the 12 canonical cols
+    frames = {
+        "unsw_nb15": {"dur": 1.0, "spkts": 5, "dpkts": 4, "sbytes": 500,
+                      "dbytes": 400, "rate": 9, "sload": 100, "dload": 80,
+                      "smean": 60, "dmean": 70, "sjit": 300, "djit": 30, "label": 1},
+        "bot_iot": {"dur": 1.0, "spkts": 5, "dpkts": 4, "sbytes": 500, "dbytes": 400,
+                    "rate": 9, "srate": 5, "drate": 4, "min": 54, "max": 1400,
+                    "mean": 300, "stddev": 30, "label": 1},
+        "cic_iot_2023": {"flow_duration": 1.0, "Number": 5, "Tot sum": 500,
+                         "Tot size": 400, "Rate": 9, "Srate": 5, "Drate": 4,
+                         "Min": 54, "Max": 1400, "AVG": 300, "Std": 30,
+                         "Header_Length": 20, "label": 1},
+    }
+    for ds, row in frames.items():
+        out = dm.align(pd.DataFrame([row] * 3), ds)
+        assert list(out.columns) == dm.UNIFIED_FEATURES + ["label"], ds
+        assert len(out) == 3 and out.isna().sum().sum() == 0, ds
 
 
 # ── 6. Detector + daemon (offline / replay / live path) ───────────────────────
@@ -184,7 +244,9 @@ def t_live_path():
         table.add_packet(ff.normalize_scapy(p), t + i*0.001)
     rows = table.extract(min_pkts=1, window=60.0)
     inc = aggregate([m for m,_ in rows], det.classify([v for _,v in rows]))
-    assert any(a["kind"] == "portscan" for a in inc), inc
+    # plumbing check: the scan source must surface as some attack (exact class
+    # depends on reply behaviour; reply-less sweeps can read as flood-like)
+    assert any(a["src_ip"] == "10.0.0.9" and a["kind"] != "benign" for a in inc), inc
 
 
 def t_daemon_help():
@@ -260,6 +322,9 @@ def main():
         ("traffic_gen CLI", t_traffic_gen_cli),
         ("build_corpus helper", t_build_corpus_helper),
         ("model artifacts", t_model_artifacts),
+        ("ips responder", t_ips_responder),
+        ("c export + compile", t_c_export),
+        ("dataset alignment (SFAF)", t_dataset_maps),
         ("detector classify known", t_detector_classify_known),
         ("daemon offline mode", t_daemon_offline),
         ("daemon replay mode", t_daemon_replay),

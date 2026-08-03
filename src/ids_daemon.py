@@ -42,6 +42,7 @@ MODELS = os.path.join(ROOT, "models")
 DEFAULT_MODEL = os.path.join(MODELS, "live_ids.onnx")
 DEFAULT_META = os.path.join(MODELS, "live_meta.json")
 PROTO_NAME = {6: "TCP", 17: "UDP", 1: "ICMP"}
+CATEGORIES = {}   # kind -> coarse category, populated when a Detector loads meta
 
 _TTY = sys.stdout.isatty()
 def _c(code, s):
@@ -64,6 +65,8 @@ class Detector:
         with open(meta_path) as f:
             self.meta = json.load(f)
         self.labels = {int(k): v for k, v in self.meta["labels"].items()}
+        self.categories = self.meta.get("categories", {})
+        CATEGORIES.update(self.categories)
         assert self.meta["features"] == FEATURE_NAMES, "feature order mismatch!"
 
     def classify(self, vectors):
@@ -112,7 +115,9 @@ def aggregate(metas, results):
 def fmt_incident(a):
     proto = PROTO_NAME.get(a["proto"], str(a["proto"]))
     conf = DIM("conf~%.2f" % a["avg_conf"])
-    return (f"  {RED('⚠ ATTACK')} {YEL(a['kind']):<22} "
+    cat = CATEGORIES.get(a["kind"], "")
+    label = f"{cat}/{a['kind']}" if cat and cat != "benign" else a["kind"]
+    return (f"  {RED('⚠ ATTACK')} {YEL(label):<30} "
             f"src={a['src_ip']:<15} {proto:<4} "
             f"{a['flows']:>5} flows  {a['n_dst_ports']:>4} dst-ports  "
             f"{a['n_dst_ips']:>3} dst-ips  {a['pkts']:>6} pkts  {conf}")
@@ -194,7 +199,8 @@ def run_offline(pcap_path, det, alog, csv_out=None):
 
 
 # ── REPLAY MODE (offline pcap, live-style progressive alerts) ─────────────────
-def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=0.5):
+def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=0.5,
+               responder=None):
     print(CYA(f"\n[*] Replay (live-style): {pcap_path}  "
               f"window={window}s step={step}s min_conf={min_conf}"))
     packets = sorted(read_pcap(pcap_path), key=lambda x: x[0])
@@ -221,6 +227,10 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
                 rel = now - t0
                 print(f"  {DIM(f'[t+{rel:6.1f}s]')}{fmt_incident(a)}")
                 alog.emit(a)
+                if responder is not None:
+                    responder.handle(a["src_ip"], a["kind"], a["avg_conf"])
+        if responder is not None:
+            responder.expire()
 
     for ts, raw in packets:
         pk = parse_raw(raw)
@@ -242,7 +252,8 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
 
 
 # ── LIVE MODE ─────────────────────────────────────────────────────────────────
-def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_conf=0.5):
+def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_conf=0.5,
+             responder=None):
     try:
         from scapy.all import AsyncSniffer
     except Exception:
@@ -275,6 +286,10 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
                 if a["flows"] >= seen.get(key, 0) * 1.5 or key not in seen:
                     seen[key] = a["flows"]
                     print(fmt_incident(a)); alog.emit(a)
+                    if responder is not None:
+                        responder.handle(a["src_ip"], a["kind"], a["avg_conf"])
+            if responder is not None:
+                responder.expire()
             table.prune(older_than=idle_evict, now=now)
             print(DIM(f"  [{dt.datetime.now():%H:%M:%S}] pkts={stats['pkts']:,} "
                       f"flows={len(table.flows):,} incidents={alog.n}"), end="\r")
@@ -304,19 +319,42 @@ def main():
     ap.add_argument("--speed", type=float, default=0.0, help="replay wall-clock factor")
     ap.add_argument("--min-conf", type=float, default=0.5, dest="min_conf",
                     help="live/replay: min confidence to raise an alert")
+    # IPS (active response) — opt-in, dry-run unless --prevent
+    ap.add_argument("--ips", action="store_true",
+                    help="enable IPS layer in dry-run (logs would-block actions)")
+    ap.add_argument("--prevent", action="store_true",
+                    help="IPS enforce mode: actually block sources (needs root+nft/iptables)")
+    ap.add_argument("--ips-min-conf", type=float, default=0.9, dest="ips_min_conf",
+                    help="min confidence for the IPS to act (default 0.9)")
+    ap.add_argument("--block-seconds", type=int, default=300, dest="block_seconds",
+                    help="how long an IPS block lasts (default 300s)")
+    ap.add_argument("--allow", action="append", default=[],
+                    help="IP/CIDR the IPS must never block (repeatable)")
     args = ap.parse_args()
 
     det = Detector(args.model, args.meta)
     alog = AlertLog(args.log)
+
+    responder = None
+    if args.ips or args.prevent:
+        from ips_response import Responder
+        responder = Responder(mode="enforce" if args.prevent else "dry-run",
+                              min_conf=args.ips_min_conf,
+                              block_seconds=args.block_seconds,
+                              allowlist=args.allow)
+        print(CYA(f"[IPS] {responder.status()}"))
+
     try:
         if args.pcap:
             run_offline(args.pcap, det, alog, csv_out=args.csv)
         elif args.replay:
             run_replay(args.replay, det, alog, window=args.window,
-                       step=args.step, speed=args.speed, min_conf=args.min_conf)
+                       step=args.step, speed=args.speed, min_conf=args.min_conf,
+                       responder=responder)
         else:
             run_live(args.iface, det, alog, window=args.window,
-                     flush_s=args.step, min_conf=args.min_conf)
+                     flush_s=args.step, min_conf=args.min_conf,
+                     responder=responder)
     finally:
         alog.close()
 

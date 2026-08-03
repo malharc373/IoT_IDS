@@ -33,8 +33,7 @@ from ids_daemon import Detector  # noqa: E402
 import traffic_gen as tg  # noqa: E402
 
 RESULTS = os.path.join(ROOT, "demo", "results")
-KINDS = ["benign", "portscan", "synflood", "icmpflood",
-         "udpflood", "ssh_bruteforce", "slowloris"]
+KINDS = list(tg.ATTACK_KINDS)
 SCENARIOS_PER_CLASS = 10
 BASE_SEED = 50_000   # far outside the training range
 
@@ -56,7 +55,11 @@ def main():
     y_true, y_pred = [], []
     for kind in KINDS:
         for s in range(SCENARIOS_PER_CLASS):
-            pkts = tg.generate(kind, seed=BASE_SEED + label_to_id[kind] * 1000 + s)
+            if kind == "benign":
+                variant = tg.BENIGN_VARIANTS[s % len(tg.BENIGN_VARIANTS)]
+                pkts = tg.generate(variant, seed=BASE_SEED + label_to_id[kind] * 1000 + s)
+            else:
+                pkts = tg.generate(kind, seed=BASE_SEED + label_to_id[kind] * 1000 + s)
             flows = flows_of(pkts)
             vecs = [v for _, v in flows]
             preds = det.classify(vecs)

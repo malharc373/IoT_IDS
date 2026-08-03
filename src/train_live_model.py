@@ -91,9 +91,10 @@ def main():
     print("Balanced class distribution:")
     print(df["kind"].value_counts().to_string())
 
-    # contiguous label ids in a fixed order
-    kinds = ["benign", "portscan", "synflood", "icmpflood",
-             "udpflood", "ssh_bruteforce", "slowloris"]
+    # contiguous label ids in a fixed order (must match traffic_gen.ATTACK_KINDS)
+    sys.path.insert(0, os.path.join(ROOT, "attacks"))
+    import traffic_gen as tg
+    kinds = list(tg.ATTACK_KINDS)
     kind_to_id = {k: i for i, k in enumerate(kinds)}
     df = df[df["kind"].isin(kinds)]
     y = df["kind"].map(kind_to_id).values
@@ -164,13 +165,22 @@ def main():
     size = export_onnx(pipe, onnx_path)
     print(f"Exported {onnx_path}  ({size/1024:.1f} KB)")
 
+    # raw booster + scaler params — enables the dependency-free C export (MCUs)
+    pipe.named_steps["clf"].get_booster().save_model(
+        os.path.join(MODELS, "live_ids_booster.json"))
+    sc = pipe.named_steps["scaler"]
+
     meta = {
         "model": "live_ids",
         "type": "xgboost-multiclass",
         "features": FEATURE_NAMES,
         "n_features": N_FEATURES,
         "labels": {str(i): k for i, k in enumerate(kinds)},
+        "categories": {k: tg.CATEGORY.get(k, "attack") for k in kinds},
         "attack_labels": [k for k in kinds if k != "benign"],
+        "num_class": len(kinds),
+        "scaler_mean": [round(float(v), 6) for v in sc.mean_],
+        "scaler_scale": [round(float(v), 6) for v in sc.scale_],
         "onnx_input": "input",
         "metrics": {
             "multiclass_accuracy": round(float(acc), 4),

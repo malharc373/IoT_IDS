@@ -60,6 +60,13 @@ Detect + **prevent** (dry-run IPS shows what it *would* block):
 python src/ids_daemon.py --replay data/pcaps/demo_mixed.pcap --ips
 ```
 
+Live **web dashboard** (reads the alert feed; stdlib-only, Pi-friendly):
+
+```bash
+python src/ids_daemon.py --replay data/pcaps/demo_mixed.pcap --ips   # writes alerts
+python src/dashboard.py                                              # http://localhost:8080
+```
+
 Compile the model for a microcontroller:
 
 ```bash
@@ -130,6 +137,7 @@ src/
   train_live_model.py  train the edge model; export ONNX + booster + meta
   ids_daemon.py        the IDS/IPS: --pcap / --replay / --iface, --ips/--prevent
   ips_response.py      active response: block/rate-limit (nftables/iptables)
+  dashboard.py         live web dashboard (stdlib http.server, reads alert feed)
   export_c.py          compile the model to a dependency-free C header (MCUs)
 attacks/
   traffic_gen.py       scapy generators: benign family + 9 attack types

@@ -1,0 +1,20 @@
+# Reference systemd unit — deploy/setup_pi.sh generates the real one with your
+# repo path + interface filled in. Copy to /etc/systemd/system/iot-ids.service
+# and edit the paths if installing manually.
+[Unit]
+Description=IoT-IDS live intrusion detection sensor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/pi/IOT-IDS
+ExecStart=/home/pi/IOT-IDS/.venv/bin/python /home/pi/IOT-IDS/src/ids_daemon.py --iface eth0 --log /home/pi/IOT-IDS/logs/alerts.jsonl
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -6,13 +6,15 @@
 #
 # Usage (on the Pi):
 #   cd ~/IOT-IDS
-#   sudo bash deploy/setup_pi.sh [INTERFACE]
+#   sudo bash deploy/setup_pi.sh [INTERFACE] [DASHBOARD_PORT]
 #
-# INTERFACE defaults to eth0 (use wlan0 for Wi-Fi).
+# INTERFACE defaults to eth0 (use wlan0 for Wi-Fi); DASHBOARD_PORT to 8080.
+# Installs two services: iot-ids (sensor) and iot-ids-dashboard (web UI).
 
 set -euo pipefail
 
 IFACE="${1:-eth0}"
+DASH_PORT="${2:-8080}"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RUN_USER="${SUDO_USER:-$(whoami)}"
 VENV="$REPO_DIR/.venv"
@@ -21,6 +23,7 @@ PY="$VENV/bin/python"
 echo "=== IoT-IDS Pi setup ==="
 echo "  repo      : $REPO_DIR"
 echo "  interface : $IFACE"
+echo "  dashboard : port $DASH_PORT"
 echo "  user      : $RUN_USER"
 
 echo "--- [1/4] system packages ---"
@@ -46,9 +49,9 @@ meta = json.load(open(os.path.join("$REPO_DIR","models","live_meta.json")))
 print("  model OK:", meta["metrics"])
 PY
 
-echo "--- [4/4] systemd service ---"
-SERVICE=/etc/systemd/system/iot-ids.service
-sudo tee "$SERVICE" >/dev/null <<UNIT
+echo "--- [4/4] systemd services ---"
+# Sensor (needs root for packet capture)
+sudo tee /etc/systemd/system/iot-ids.service >/dev/null <<UNIT
 [Unit]
 Description=IoT-IDS live intrusion detection sensor
 After=network-online.target
@@ -68,12 +71,37 @@ StandardError=journal
 WantedBy=multi-user.target
 UNIT
 
+# Dashboard (no root needed — only reads the alert log; starts after the sensor)
+sudo tee /etc/systemd/system/iot-ids-dashboard.service >/dev/null <<UNIT
+[Unit]
+Description=IoT-IDS web dashboard
+After=iot-ids.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$RUN_USER
+WorkingDirectory=$REPO_DIR
+ExecStart=$PY $REPO_DIR/src/dashboard.py --port $DASH_PORT --log $REPO_DIR/logs/alerts.jsonl
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
 sudo systemctl daemon-reload
-sudo systemctl enable iot-ids.service
+sudo systemctl enable iot-ids.service iot-ids-dashboard.service
+
+# Best-effort: discover the LAN IP to print a clickable dashboard URL
+IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}')"; IP_ADDR="${IP_ADDR:-<pi-ip>}"
 
 echo
 echo "=== Done ==="
-echo "Start now :  sudo systemctl start iot-ids"
-echo "Live logs :  journalctl -u iot-ids -f"
-echo "Alerts    :  tail -f $REPO_DIR/logs/alerts.jsonl"
-echo "Manual run:  sudo $PY src/ids_daemon.py --iface $IFACE"
+echo "Start both :  sudo systemctl start iot-ids iot-ids-dashboard"
+echo "Dashboard  :  http://$IP_ADDR:$DASH_PORT"
+echo "Sensor logs:  journalctl -u iot-ids -f"
+echo "Dash logs  :  journalctl -u iot-ids-dashboard -f"
+echo "Alerts     :  tail -f $REPO_DIR/logs/alerts.jsonl"

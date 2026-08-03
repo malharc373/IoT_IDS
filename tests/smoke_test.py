@@ -337,6 +337,11 @@ def t_shell_syntax():
 def t_systemd_unit_sane():
     txt = open(os.path.join(ROOT, "deploy", "iot-ids.service")).read()
     assert "[Service]" in txt and "ids_daemon.py" in txt and "--iface" in txt
+    dash = open(os.path.join(ROOT, "deploy", "iot-ids-dashboard.service")).read()
+    assert "[Service]" in dash and "dashboard.py" in dash
+    # setup script installs and enables both services
+    setup = open(os.path.join(ROOT, "deploy", "setup_pi.sh")).read()
+    assert "iot-ids-dashboard.service" in setup and "enable iot-ids.service iot-ids-dashboard.service" in setup
 
 
 def main():

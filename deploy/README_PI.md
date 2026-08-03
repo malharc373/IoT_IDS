@@ -57,16 +57,21 @@ cd ~/IOT-IDS
 sudo bash deploy/setup_pi.sh eth0        # or wlan0
 ```
 
-This installs deps into `.venv`, smoke-tests the model, and registers a
-`iot-ids` systemd service.
+This installs deps into `.venv`, smoke-tests the model, and registers two
+systemd services: **`iot-ids`** (the sensor, runs as root) and
+**`iot-ids-dashboard`** (the web UI, runs as your user). Pass a second argument
+to change the dashboard port: `sudo bash deploy/setup_pi.sh eth0 8080`.
 
 ## 5. Run the sensor
 
 ```bash
-sudo systemctl start iot-ids      # start now
-journalctl -u iot-ids -f          # watch live detections
+sudo systemctl start iot-ids iot-ids-dashboard   # sensor + dashboard
+journalctl -u iot-ids -f                          # watch live detections
 tail -f ~/IOT-IDS/logs/alerts.jsonl
 ```
+
+The dashboard is then live at `http://<pi-ip>:8080` from any device on the LAN.
+Both services start automatically on boot.
 
 Or run it in the foreground to watch directly:
 

@@ -1,0 +1,21 @@
+# Reference systemd unit for the web dashboard — deploy/setup_pi.sh generates
+# the real one with your repo path + port filled in. Copy to
+# /etc/systemd/system/iot-ids-dashboard.service and edit paths if installing
+# manually. The dashboard only reads the alert log, so it runs as a normal user.
+[Unit]
+Description=IoT-IDS web dashboard
+After=iot-ids.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/IOT-IDS
+ExecStart=/home/pi/IOT-IDS/.venv/bin/python /home/pi/IOT-IDS/src/dashboard.py --port 8080 --log /home/pi/IOT-IDS/logs/alerts.jsonl
+Restart=on-failure
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

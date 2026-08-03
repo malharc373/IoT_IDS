@@ -41,7 +41,12 @@ BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CICIDS = os.path.join(BASE, "Datasets", "MachineLearningCVE")
 UNSW = os.path.join(BASE, "Datasets", "UNSWNB15")
 TON = os.path.join(BASE, "Datasets", "TONIoT")
+BOTIOT = os.path.join(BASE, "Datasets", "BotIoT")
+CICIOT = os.path.join(BASE, "Datasets", "CICIoT2023")
 MODELS = os.path.join(BASE, "models")
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import dataset_maps as dm  # noqa: E402
 
 UNIFIED_FEATURES = [
     "Flow Duration", "Total Fwd Packets", "Total Backward Packets",
@@ -106,6 +111,32 @@ def load_datasets():
     return df_cic, df_unsw, df_ton
 
 
+def load_extra_datasets():
+    """Optionally load Bot-IoT and CIC-IoT-2023 if present, SFAF-aligned to the
+    canonical 12 features. Returns list of (name, aligned_df). Absent datasets
+    are skipped so the pipeline runs on whatever is available."""
+    extras = []
+    if os.path.isdir(BOTIOT):
+        files = sorted(glob.glob(os.path.join(BOTIOT, "*.csv")))
+        if files:
+            df = pd.concat([pd.read_csv(f, low_memory=False) for f in files],
+                           ignore_index=True)
+            extras.append(("bot_iot", dm.align(df, "bot_iot")))
+    if os.path.isdir(CICIOT):
+        files = sorted(glob.glob(os.path.join(CICIOT, "*.csv")))
+        if files:
+            df = pd.concat([pd.read_csv(f, low_memory=False) for f in files],
+                           ignore_index=True)
+            # CIC-IoT-2023 label column is often 'label' or 'Label'
+            if "label" not in df.columns and "Label" in df.columns:
+                df = df.rename(columns={"Label": "label"})
+            df["label"] = (df["label"].astype(str).str.upper() != "BENIGN").astype(int)
+            extras.append(("cic_iot_2023", dm.align(df, "cic_iot_2023")))
+    for name, d in extras:
+        print(f"{name}: {len(d):,} aligned rows")
+    return extras
+
+
 def preprocess(df, rs=42):
     df = df.copy().replace([np.inf, -np.inf], np.nan).dropna(
         subset=UNIFIED_FEATURES + ["label"])
@@ -165,8 +196,15 @@ def main():
           f"gap={(acc_c-acc_u)*100:.1f}pp")
 
     # ── Stage 4: unified SFAF model ───────────────────────────────────────────
-    Xtr = np.vstack([Xtr_c, Xtr_u, Xtr_t])
-    ytr = np.hstack([ytr_c, ytr_u, ytr_t])
+    Xtr_list, ytr_list = [Xtr_c, Xtr_u, Xtr_t], [ytr_c, ytr_u, ytr_t]
+    eval_sets = [("CICIDS2017", Xte_c, yte_c), ("UNSW-NB15", Xte_u, yte_u),
+                 ("TON-IoT", Xte_t, yte_t)]
+    for name, dfx in load_extra_datasets():
+        Xtr_e, Xte_e, ytr_e, yte_e, _ = preprocess(dfx)
+        Xtr_list.append(Xtr_e); ytr_list.append(ytr_e)
+        eval_sets.append((name, Xte_e, yte_e))
+    Xtr = np.vstack(Xtr_list)
+    ytr = np.hstack(ytr_list)
     unified = XGBClassifier(n_estimators=100, max_depth=6, tree_method="hist",
                             eval_metric="logloss", random_state=42)
     t0 = time.time(); unified.fit(Xtr, ytr)
@@ -176,9 +214,7 @@ def main():
     joblib.dump(unified, os.path.join(MODELS, "xgb_unified_4dataset.pkl"))
 
     results = {}
-    for name, Xe, ye in [("CICIDS2017", Xte_c, yte_c),
-                         ("UNSW-NB15", Xte_u, yte_u),
-                         ("TON-IoT", Xte_t, yte_t)]:
+    for name, Xe, ye in eval_sets:
         p = unified.predict(Xe); pr = unified.predict_proba(Xe)[:, 1]
         results[name] = dict(acc=accuracy_score(ye, p), f1=f1_score(ye, p),
                              auc=roc_auc_score(ye, pr))

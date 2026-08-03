@@ -38,6 +38,10 @@ KAGGLE_SOURCES = [
      "UNSW-NB15 — training/testing set (convert CSV->parquet if needed)"),
     ("dhoogla/toniotnetwork", "TONIoT",
      "TON-IoT — train_test_network.csv"),
+    ("madhavmalhotra/unb-cic-iot-dataset", "CICIoT2023",
+     "CIC-IoT-2023 — modern IoT dataset, ~33 attack types"),
+    ("saurabhshahane/classification-of-iot-attacks", "BotIoT",
+     "Bot-IoT (UNSW) — flow-based, DDoS/DoS/recon/theft"),
 ]
 
 MANUAL = """
@@ -55,6 +59,13 @@ Manual download (no Kaggle token):
               -> Processed/Network -> train_test_network.csv
               -> Datasets/TONIoT/train_test_network.csv
 
+  CIC-IoT-23  https://www.unb.ca/cic/datasets/iotdataset-2023.html
+              -> merged CSVs -> Datasets/CICIoT2023/*.csv
+
+  Bot-IoT     https://research.unsw.edu.au/projects/bot-iot-dataset
+              -> UNSW_2018_IoT_Botnet CSVs -> Datasets/BotIoT/*.csv
+
+Column alignment for all five datasets lives in code/dataset_maps.py.
 Then run:  python code/02_train_sfaf.py
 """
 

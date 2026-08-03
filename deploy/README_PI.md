@@ -74,6 +74,20 @@ Or run it in the foreground to watch directly:
 sudo .venv/bin/python src/ids_daemon.py --iface eth0
 ```
 
+### Prevention (IPS) mode
+
+To actively block attackers (not just alert), add `--prevent`. It uses
+nftables/iptables with a confidence gate, an allowlist, and auto-expiry:
+
+```bash
+sudo .venv/bin/python src/ids_daemon.py --iface eth0 --prevent \
+     --allow 192.168.1.0/24 --ips-min-conf 0.9 --block-seconds 300
+```
+
+Use `--ips` (instead of `--prevent`) for a dry-run that logs what it *would*
+block without touching the firewall. To make the systemd service enforce, add
+`--prevent` to `ExecStart` in `deploy/setup_pi.sh` before installing.
+
 ## 6. Demonstrate detection (from another host on the LAN)
 
 Install attacker tools on a second machine (your laptop):

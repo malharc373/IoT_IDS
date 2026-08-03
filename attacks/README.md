@@ -15,7 +15,9 @@ python attacks/traffic_gen.py --kind portscan --out /tmp/scan.pcap --seed 1
 python attacks/build_corpus.py --scenarios 25
 ```
 
-Classes: `benign portscan synflood icmpflood udpflood ssh_bruteforce slowloris`
+Classes: `benign portscan synflood icmpflood udpflood ssh_bruteforce slowloris
+mirai xmas_scan mqtt_flood` (+ hard-benign variants `benign_burst benign_multi`
+that resemble attacks but are legitimate — false-positive traps).
 
 ## B. Real attacks against the Pi (root, live) — used for the on-device demo
 
@@ -31,6 +33,9 @@ Pi's IP. Only ever run these against hosts you own / are authorized to test.
 | UDP flood | `sudo hping3 --udp --flood -p 53 <PI_IP>` |
 | SSH brute-force | `hydra -l pi -P wordlist.txt ssh://<PI_IP>` (or `ncrack`) |
 | Slowloris | `slowhttptest -c 200 -H -u http://<PI_IP>/` |
+| Xmas / NULL scan | `nmap -sX <PI_IP>` / `nmap -sN <PI_IP>` |
+| Mirai-style spread | `nmap -p23,2323 --open <SUBNET>/24` (telnet sweep) |
+| MQTT flood | `for i in $(seq 500); do mosquitto_pub -h <PI_IP> -t x -m y & done` |
 
 Install on the attacker host:
 ```bash

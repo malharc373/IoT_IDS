@@ -166,6 +166,34 @@ def t_c_export():
                        check=True, capture_output=True)
 
 
+def t_dashboard():
+    import importlib.util, urllib.request, threading, time
+    from http.server import ThreadingHTTPServer
+    spec = importlib.util.spec_from_file_location("dash", os.path.join(ROOT, "src", "dashboard.py"))
+    dash = importlib.util.module_from_spec(spec); spec.loader.exec_module(dash)
+    # write a couple of alert records and aggregate them
+    logp = os.path.join(TMP, "alerts.jsonl")
+    with open(logp, "w") as f:
+        f.write(json.dumps({"ts": "2026-08-03T10:00:00", "src_ip": "203.0.113.1",
+                            "kind": "portscan", "flows": 500, "confidence": 1.0}) + "\n")
+        f.write(json.dumps({"ts": "2026-08-03T10:00:01", "src_ip": "203.0.113.2",
+                            "kind": "synflood", "flows": 900, "confidence": 1.0}) + "\n")
+    st = dash.build_state(logp)
+    assert st["totals"]["incidents"] == 2 and st["totals"]["sources"] == 2
+    assert {d["type"] for d in st["by_type"]} == {"portscan", "synflood"}
+    # serve it and fetch both endpoints
+    dash.Handler.log_path = logp
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), dash.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    try:
+        page = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=3).read()
+        api = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=3).read()
+        assert b"IoT-IDS" in page and json.loads(api)["totals"]["incidents"] == 2
+    finally:
+        srv.shutdown()
+
+
 def t_dataset_maps():
     import importlib.util
     spec = importlib.util.spec_from_file_location("dm", os.path.join(ROOT, "code", "dataset_maps.py"))
@@ -325,6 +353,7 @@ def main():
         ("ips responder", t_ips_responder),
         ("c export + compile", t_c_export),
         ("dataset alignment (SFAF)", t_dataset_maps),
+        ("web dashboard", t_dashboard),
         ("detector classify known", t_detector_classify_known),
         ("daemon offline mode", t_daemon_offline),
         ("daemon replay mode", t_daemon_replay),

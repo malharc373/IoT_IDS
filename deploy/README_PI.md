@@ -88,6 +88,18 @@ Use `--ips` (instead of `--prevent`) for a dry-run that logs what it *would*
 block without touching the firewall. To make the systemd service enforce, add
 `--prevent` to `ExecStart` in `deploy/setup_pi.sh` before installing.
 
+### Web dashboard
+
+The sensor writes alerts to `logs/alerts.jsonl`; a stdlib dashboard renders them
+live. Run it alongside the sensor and browse from any device on the LAN:
+
+```bash
+.venv/bin/python src/dashboard.py --port 8080     # http://<pi-ip>:8080
+```
+
+It shows active incidents, attack-type/category breakdown, top sources, a
+per-minute timeline, and the current IPS blocklist — auto-refreshing every 2s.
+
 ## 6. Demonstrate detection (from another host on the LAN)
 
 Install attacker tools on a second machine (your laptop):

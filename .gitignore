@@ -20,8 +20,9 @@ models/*.pkl
 *.pkl
 *.onnx
 
-# Datasets (too large)
+# Datasets (too large) — real dir or a symlink to an external drive
 Datasets/
+/Datasets
 data/pcaps/
 data/processed/
 

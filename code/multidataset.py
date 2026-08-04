@@ -39,8 +39,11 @@ UNIFIED_FEATURES = [
 CATEGORIES = ["benign", "recon", "dos", "botnet", "bruteforce",
               "web", "exploit", "spoofing", "theft", "other_attack"]
 
-DEFAULT_ROOT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "Datasets")
+# Datasets root: env override (IOTIDS_DATASETS_ROOT) else the repo's ./Datasets
+# (which may be a symlink to an external drive). See .env.example.
+DEFAULT_ROOT = os.environ.get(
+    "IOTIDS_DATASETS_ROOT",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Datasets"))
 RS = 42
 
 

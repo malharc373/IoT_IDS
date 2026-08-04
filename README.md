@@ -7,18 +7,21 @@ from a Raspberry Pi down to an ESP32-class microcontroller.
 Two halves share one idea — *a small, flow-based model can detect and stop
 network attacks in real time on cheap hardware*:
 
-1. **SFAF research model** — one model that generalises across five public IDS
-   datasets (CICIDS2017, UNSW-NB15, TON-IoT, CIC-IoT-2023, Bot-IoT) by mapping
-   their incompatible schemas into one 12-feature space. A CICIDS-only model
-   scores 98% on CICIDS but collapses to **36%** on unseen UNSW; the unified
-   SFAF model recovers this to **93%** — a **+56.6 pp** generalisation gain.
-
-2. **Live edge IDS/IPS** — a self-contained real-time sensor. It sniffs traffic,
+1. **Live edge IDS/IPS** — a self-contained real-time sensor. It sniffs traffic,
    aggregates packets into bidirectional flows, and classifies each flow with a
    ~90 KB ONNX model (scaler baked in) in **microseconds per flow**. It detects
    **9 attack types across 4 categories**, reports aggregated per-source
    incidents, and can **actively block** offenders (IPS mode). The same model
    also compiles to a **dependency-free C header** for microcontrollers.
+
+2. **SFAF cross-dataset study** — ten public IDS datasets (CICIDS2017, UNSW-NB15,
+   TON-IoT, Bot-IoT, CIC-IoT-2023, CICDDoS2019, IoTID20, X-IIoTID,
+   MQTT-IoT-IDS2020, WUSTL-IIoT) aligned into one 12-feature space to measure —
+   not assert — how well flow behaviour transfers across labs/devices/tools. The
+   honest finding: **in-domain F1 0.98 vs cross-domain 0.45** (a 0.53 gap); a
+   deployable log+quantile transform lifts transfer to ~0.59 but does not close
+   it. This *is* the overfitting problem, quantified. See
+   [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
 ```
    ┌────────────────────────── shared detection core ──────────────────────────┐
@@ -73,6 +76,23 @@ Compile the model for a microcontroller:
 python src/export_c.py --verify     # writes models/live_ids.h, checks parity
 ```
 
+Benchmark the whole system (accuracy, latency, throughput, footprint):
+
+```bash
+python demo/benchmark.py            # writes demo/results/BENCHMARK.md
+```
+
+## Configuration
+
+Optional settings live in a git-ignored `.env` (copy the template):
+
+```bash
+cp .env.example .env                # e.g. IOTIDS_DATASETS_ROOT, IOTIDS_IFACE
+```
+
+No secrets belong in the repo. The Kaggle API token (for dataset downloads) goes
+at `~/.kaggle/kaggle.json` — see `code/download_datasets.py`.
+
 ## Deploy on a Raspberry Pi (IDS or IPS)
 
 Runtime needs only `onnxruntime + numpy + scapy`. Full walkthrough in
@@ -114,18 +134,47 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 > traffic: that is the SFAF result below and the purpose of the 5-dataset
 > pipeline (`code/02_train_sfaf.py`).
 
-### SFAF research model (public datasets)
+### Cross-dataset generalization (the honest real-world number)
 
-| Test dataset | Accuracy | F1 | AUC | Features |
-|---|---|---|---|---|
-| CICIDS2017 | 0.9833 | 0.9584 | 0.9985 | 12 |
-| UNSW-NB15  | 0.9268 | 0.9432 | 0.9844 | 12 |
-| TON-IoT    | 0.9941 | 0.9961 | 0.9997 | 12 |
+Ten datasets aligned to the 12-feature space, trained on one and tested on
+*others* (no leaky merged split — `code/cross_dataset_eval.py`):
 
-Generalisation gap: CICIDS-only baseline = 98.4% on CICIDS but 36.1% on unseen
-UNSW-NB15; SFAF lifts UNSW to 92.7% (**+56.6 pp**). Bot-IoT and CIC-IoT-2023
-alignment is wired in (`code/dataset_maps.py`) and runs once the datasets are
-provided. Full numbers in `models/report_numbers.md`.
+| | Binary F1 |
+|---|---|
+| In-domain (train = test dataset) | **0.978** |
+| Cross-domain (train ≠ test) | **0.450** |
+| Generalisation gap | **0.528** |
+
+A CICIDS-only model scores 0.98 in-domain but **0.00–0.08** on every other
+dataset — it memorises artifacts, not attack behaviour. A deployable
+log+quantile feature transform lifts leave-one-dataset-out transfer from 0.54 to
+0.59, but the ~0.59 ceiling vs 0.98 in-domain shows a fixed transform does **not**
+close the gap — genuine domain adaptation is the open problem. Full study +
+heatmap in [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
+
+### System benchmark (Apple M4; `python demo/benchmark.py`)
+
+| | |
+|---|---|
+| ONNX inference | 10 µs/flow single, **381k flows/s** batched |
+| Native C model | **1.15 µs/flow**, ~130 B RAM, zero deps |
+| Feature extraction | ~248k packets/s |
+| Daemon memory | **56 MB** (onnxruntime + numpy) |
+| Model size | 90 KB ONNX / 42 KB C const |
+
+Real-time on a Pi 4 with headroom — sniffing/aggregation, not inference, is the
+limit. Full report: [`demo/results/BENCHMARK.md`](demo/results/BENCHMARK.md).
+
+### Reproducing the SFAF datasets
+
+The datasets are large and gated; fetch them with a Kaggle token (auto-detected)
+and auth-free direct URLs:
+
+```bash
+python code/download_datasets.py --direct   # Kaggle + IoT-23/WUSTL, or prints links
+python code/multidataset.py                 # verify alignment of all present datasets
+python code/cross_dataset_eval.py           # run the generalization study
+```
 
 ---
 
@@ -146,20 +195,25 @@ attacks/
 demo/
   run_demo.sh          one-command end-to-end demonstration
   validate.py          held-out validation on unseen scenarios
-  results/             confusion matrices, reports
+  benchmark.py         accuracy / latency / throughput / footprint benchmark
+  results/             confusion matrices, cross-dataset study, benchmark reports
 deploy/
-  setup_pi.sh, iot-ids.service, requirements-pi.txt, README_PI.md
+  setup_pi.sh          Pi installer: venv + iot-ids + iot-ids-dashboard services
+  iot-ids*.service, requirements-pi.txt, README_PI.md, README_MCU.md
 code/
-  02_train_sfaf.py     headless 5-dataset SFAF reproduction (regenerates artifacts)
-  dataset_maps.py      SFAF alignment for all 5 datasets (unit-tested)
-  download_datasets.py dataset fetch + instructions
+  multidataset.py      load + SFAF-align 10 flow datasets, normalized taxonomy
+  cross_dataset_eval.py train-on-one/test-on-others generalization matrix
+  transfer_experiment.py deployable feature transforms to close the transfer gap
+  02_train_sfaf.py     headless SFAF reproduction (regenerates thesis artifacts)
+  dataset_maps.py      column alignment; download_datasets.py  dataset fetch
   *.ipynb              EDA / SFAF / edge-deployment notebooks
 models/
   live_ids.onnx        deployable edge model (scaler baked in, ~90 KB)
   live_ids.h           dependency-free C model for microcontrollers
   live_meta.json       feature order, labels, categories, scaler, metrics
 tests/
-  smoke_test.py        21 checks over every module/script
+  smoke_test.py        24 checks over every module/script
+.env.example           optional configuration template (copy to .env)
 ```
 
 ---

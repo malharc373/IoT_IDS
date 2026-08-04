@@ -140,6 +140,21 @@ detection core (no root needed):
 .venv/bin/python src/ids_daemon.py --replay data/pcaps/demo_mixed.pcap
 ```
 
+## Benchmark the Pi (real numbers, not projected)
+
+`demo/benchmark.py` runs on the minimal Pi runtime — it degrades gracefully when
+training libs are absent and prints *measured* Pi figures (no ×12 projection):
+
+```bash
+.venv/bin/python demo/benchmark.py        # writes demo/results/BENCHMARK.md
+```
+
+It reports model size, ONNX + native-C inference latency/throughput, feature-
+extraction throughput, end-to-end pcap speed, held-out accuracy, and memory. The
+tree/node counts fall back to the C header if xgboost isn't installed; the only
+section that needs extra libs is the latency chart (matplotlib), which is skipped
+cleanly if absent.
+
 ## Troubleshooting
 
 | Symptom | Fix |

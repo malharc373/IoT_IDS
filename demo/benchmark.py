@@ -52,25 +52,40 @@ def section(t):
 def bench_params():
     section("1. MODEL PARAMETERS & FOOTPRINT")
     meta = json.load(open(os.path.join(MODELS, "live_meta.json")))
-    import xgboost as xgb
-    b = xgb.Booster(); b.load_model(os.path.join(MODELS, "live_ids_booster.json"))
-    df = b.trees_to_dataframe()
-    n_trees = df["Tree"].nunique()
-    n_nodes = len(df)
-    n_leaves = int((df["Feature"] == "Leaf").sum())
     sizes = {f: os.path.getsize(os.path.join(MODELS, f)) for f in
              ["live_ids.onnx", "live_ids.h", "live_ids_booster.json", "live_meta.json"]
              if os.path.exists(os.path.join(MODELS, f))}
+    # tree/node counts need xgboost (training lib) — optional on a lean Pi.
+    n_trees = n_nodes = n_leaves = None
+    try:
+        import xgboost as xgb
+        b = xgb.Booster(); b.load_model(os.path.join(MODELS, "live_ids_booster.json"))
+        df = b.trees_to_dataframe()
+        n_trees, n_nodes = df["Tree"].nunique(), len(df)
+        n_leaves = int((df["Feature"] == "Leaf").sum())
+    except Exception:
+        # fall back to the C header, which records the counts in its comment
+        try:
+            hdr = open(os.path.join(MODELS, "live_ids.h")).read()
+            import re
+            n_trees = int(re.search(r"IDS_NUM_TREES (\d+)", hdr).group(1))
+            n_nodes = int(re.search(r"IDS_NUM_NODES (\d+)", hdr).group(1))
+        except Exception:
+            pass
     out(f"  Features               : {meta['n_features']}")
     out(f"  Classes                : {meta['num_class']}  ({', '.join(meta['labels'].values())})")
-    out(f"  Boosted trees          : {n_trees}")
-    out(f"  Total nodes / leaves   : {n_nodes:,} / {n_leaves:,}")
+    if n_trees:
+        out(f"  Boosted trees          : {n_trees}")
+        leaf = f" / {n_leaves:,} leaves" if n_leaves else ""
+        out(f"  Total nodes            : {n_nodes:,}{leaf}")
+    else:
+        out(f"  Boosted trees / nodes  : (xgboost not installed — skipped)")
     out(f"  ONNX model size        : {sizes['live_ids.onnx']/1024:.1f} KB")
-    out(f"  C header size          : {sizes['live_ids.h']/1024:.1f} KB "
-        f"(~{n_nodes*16//1024} KB const data)")
-    out(f"  Booster JSON (train)   : {sizes['live_ids_booster.json']/1024:.1f} KB")
+    if "live_ids.h" in sizes:
+        cd = f" (~{n_nodes*16//1024} KB const data)" if n_nodes else ""
+        out(f"  C header size          : {sizes['live_ids.h']/1024:.1f} KB{cd}")
     out(f"  In-domain metrics      : {meta['metrics']}")
-    return meta, sizes, n_trees, n_nodes
+    return meta, sizes, n_trees, n_nodes or 0
 
 
 # ── 2. ONNX inference latency ─────────────────────────────────────────────────
@@ -206,7 +221,6 @@ def bench_accuracy():
     det = Detector()
     kinds = list(tg.ATTACK_KINDS)
     kid = {k: i for i, k in enumerate(kinds)}
-    from sklearn.metrics import f1_score, recall_score, accuracy_score
     yt, yp = [], []
     for kind in kinds:
         for s in range(8):
@@ -221,11 +235,24 @@ def bench_accuracy():
             for pk, _c in det.classify([v for _, v in rows]):
                 yt.append(kid[kind]); yp.append(kid[pk])
     yt, yp = np.array(yt), np.array(yp)
-    acc = accuracy_score(yt, yp)
-    mf1 = f1_score(yt, yp, average="macro", zero_division=0)
-    bt, bp = (yt != 0).astype(int), (yp != 0).astype(int)
-    det_rate = recall_score(bt, bp, zero_division=0)
-    fpr = float((bp[bt == 0] == 1).mean())
+
+    def _recall(mask, pred):   # pure-numpy recall, no sklearn needed on the Pi
+        tp = np.sum(pred & mask); fn = np.sum(~pred & mask)
+        return tp / (tp + fn) if (tp + fn) else 0.0
+
+    acc = float((yt == yp).mean())
+    # macro F1 over classes
+    f1s = []
+    for i in range(len(kinds)):
+        tp = np.sum((yp == i) & (yt == i)); fp = np.sum((yp == i) & (yt != i))
+        fn = np.sum((yp != i) & (yt == i))
+        prec = tp / (tp + fp) if (tp + fp) else 0.0
+        rec = tp / (tp + fn) if (tp + fn) else 0.0
+        f1s.append(2 * prec * rec / (prec + rec) if (prec + rec) else 0.0)
+    mf1 = float(np.mean(f1s))
+    bt, bp = (yt != 0), (yp != 0)
+    det_rate = _recall(bt, bp)
+    fpr = float((bp[~bt]).mean()) if (~bt).any() else 0.0
     out(f"  flows evaluated        : {len(yt):,} (unseen seeds)")
     out(f"  multiclass accuracy    : {acc*100:.2f}%")
     out(f"  macro F1               : {mf1:.4f}")
@@ -235,7 +262,7 @@ def bench_accuracy():
     for i, k in enumerate(kinds):
         m = yt == i
         if m.any():
-            out(f"    {k:<16} {recall_score(m, yp == i, zero_division=0)*100:5.1f}%")
+            out(f"    {k:<16} {_recall(m, yp == i)*100:5.1f}%")
     out("\n  NOTE: synthetic traffic is separable; see CROSS_DATASET_FINDINGS.md")
     out("        for the honest cross-dataset numbers (in-domain 0.98 vs cross 0.45).")
     return acc, mf1, det_rate, fpr
@@ -296,22 +323,42 @@ def bench_pi(lat_rows, c_ns, extract):
         "link rates; sniffing/aggregation, not inference, is the limit.")
 
 
+def _is_pi():
+    return platform.machine().lower() in ("aarch64", "armv7l", "armv6l") and \
+        platform.system() == "Linux"
+
+
+def _guard(fn, *a):
+    """Run a benchmark section; skip (don't abort) if an optional dep is missing."""
+    try:
+        return fn(*a)
+    except ImportError as e:
+        out(f"  (section skipped — missing dependency: {e.name or e})")
+    except Exception as e:
+        out(f"  (section skipped — {type(e).__name__}: {e})")
+    return None
+
+
 def main():
     os.makedirs(RESULTS, exist_ok=True)
     out(f"IoT-IDS SYSTEM BENCHMARK   host={platform.platform()}")
     out(f"python={platform.python_version()}  time={time.strftime('%Y-%m-%d %H:%M')}")
     meta, sizes, n_trees, n_nodes = bench_params()
     lat = bench_latency(meta["n_features"])
-    c_ns = bench_c(meta["n_features"])
-    extract = bench_extract()
-    bench_e2e()
-    bench_accuracy()
-    bench_memory()
-    bench_pi(lat, c_ns, extract)
+    c_ns = _guard(bench_c, meta["n_features"])
+    extract = _guard(bench_extract)
+    _guard(bench_e2e)
+    _guard(bench_accuracy)
+    _guard(bench_memory)
+    if _is_pi():
+        section("8. HOST IS A RASPBERRY PI — numbers above are REAL, not projected")
+        out("  These are measured on the Pi itself; no scaling applied.")
+    else:
+        bench_pi(lat, c_ns, extract)
 
     with open(os.path.join(RESULTS, "BENCHMARK.md"), "w") as f:
         f.write("# IoT-IDS system benchmark\n\n```\n" + "\n".join(REPORT) + "\n```\n")
-    _latency_chart(lat)
+    _guard(_latency_chart, lat)
     out(f"\nwrote {os.path.join(RESULTS, 'BENCHMARK.md')}")
 
 

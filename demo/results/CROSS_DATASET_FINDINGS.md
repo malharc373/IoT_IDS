@@ -49,6 +49,33 @@ is where the real research contribution lies (better feature alignment, domain
 adaptation, per-family calibration). Reporting this gap honestly is more
 valuable than a single optimistic merged-split accuracy.
 
+## Can a deployable transform close the gap? (partly)
+
+Network-flow features are heavy-tailed and reported in different units across
+datasets, so a scaler fit on one domain mismatches another. We tested fixed,
+edge-exportable feature transforms under **leave-one-dataset-out** (train on 9,
+test on the 10th, averaged over all 10 — `code/transfer_experiment.py`):
+
+| Transform | LODO F1 | recall | benign FPR |
+|---|---|---|---|
+| raw + StandardScaler (baseline) | 0.544 | 0.504 | 0.346 |
+| signed-log + StandardScaler | **0.594** | 0.594 | 0.460 |
+| signed-log + RobustScaler | 0.568 | 0.551 | 0.429 |
+| quantile→normal | 0.566 | 0.521 | 0.381 |
+| **signed-log + quantile→normal** | 0.589 | 0.566 | **0.391** |
+| dimensionless ratios | 0.526 | 0.507 | 0.329 |
+
+**`log_quantile` is the best trade-off** — F1 0.589 (+0.045 over baseline) at a
+much lower benign false-positive rate than plain log-scaling. Pooling 10
+datasets already lifts LODO transfer to ~0.54–0.59 vs the 0.45 single-source
+mean, and a log+quantile transform adds a further real, free improvement.
+
+But note the ceiling: even the best fixed transform reaches **~0.59 LODO F1
+against ~0.98 in-domain**. A simple feature transform does *not* close the gap —
+genuine cross-dataset transfer needs domain adaptation / per-family calibration,
+which is the real open research direction. `transfer_comparison.png` visualizes
+this against the in-domain ceiling.
+
 ## Caveats
 - Two datasets are lossy under alignment (MQTT-IoT-IDS2020 has no flow duration/
   rate; CIC-IoT-2023 is packet-stat based with no fwd/bwd direction) — their

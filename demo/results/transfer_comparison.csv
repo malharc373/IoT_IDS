@@ -1,0 +1,8 @@
+transform,lodo_f1,recall,benign_fpr
+log_standard,0.5936,0.5943,0.4605
+log_quantile,0.5893,0.5658,0.3907
+log_robust,0.5679,0.5511,0.429
+quantile,0.5656,0.5212,0.3815
+raw_standard,0.5435,0.504,0.3459
+ratios_log,0.5431,0.5524,0.4514
+ratios_standard,0.5259,0.5066,0.3294

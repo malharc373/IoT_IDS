@@ -259,11 +259,28 @@ def load_ciciot2023(root):
     return _finish(df, fmap, y, cat, "cic_iot_2023")
 
 
+def load_wustl(root):
+    """WUSTL-IIoT-2021 — Argus industrial-control flow CSV."""
+    f = os.path.join(root, "WUSTL_IIoT_2021", "wustl_iiot_2021.csv")
+    df = pd.read_csv(f, low_memory=False); df.columns = df.columns.str.strip()
+    y = df["Target"].astype(int)
+    cat = df.get("Traffic", pd.Series(["normal"] * len(df))).map(to_category)
+    fmap = {"Flow Duration": "Dur", "Total Fwd Packets": "SrcPkts",
+            "Total Backward Packets": "DstPkts",
+            "Total Length of Fwd Packets": "SrcBytes",
+            "Total Length of Bwd Packets": "DstBytes", "Flow Packets/s": "Rate",
+            "Fwd Packets/s": "SrcRate", "Bwd Packets/s": "DstRate",
+            "Min Packet Length": "Min", "Max Packet Length": "Max",
+            "Packet Length Mean": "Mean", "Packet Length Std": None}
+    return _finish(df, fmap, y, cat, "wustl_iiot")
+
+
 LOADERS = {
     "cicids2017": load_cicids2017, "unsw_nb15": load_unsw, "ton_iot": load_ton,
     "bot_iot": load_botiot, "cicddos2019": load_cicddos2019,
     "iotid20": load_iotid20, "x_iiotid": load_xiiotid,
     "mqtt_iot_ids2020": load_mqtt, "cic_iot_2023": load_ciciot2023,
+    "wustl_iiot": load_wustl,
 }
 # Lossy (no direction / no duration) — usable but flagged.
 LOSSY = {"mqtt_iot_ids2020", "cic_iot_2023"}
@@ -297,6 +314,8 @@ def available(root=DEFAULT_ROOT):
                 ok = bool(glob.glob(os.path.join(root, "MQTT_IoT_IDS2020", "*.csv")))
             elif name == "cic_iot_2023":
                 ok = bool(glob.glob(os.path.join(root, "CICIoT2023", "*.csv")))
+            elif name == "wustl_iiot":
+                ok = os.path.exists(os.path.join(root, "WUSTL_IIoT_2021", "wustl_iiot_2021.csv"))
             else:
                 ok = False
         except Exception:

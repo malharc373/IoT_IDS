@@ -41,6 +41,7 @@ CATEGORIES = ["benign", "recon", "dos", "botnet", "bruteforce",
 
 DEFAULT_ROOT = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..", "Datasets")
+RS = 42
 
 
 # ── taxonomy: normalise any source label string → canonical category ──────────
@@ -259,6 +260,57 @@ def load_ciciot2023(root):
     return _finish(df, fmap, y, cat, "cic_iot_2023")
 
 
+def _read_zeek(path, usecols=None):
+    """Parse a Zeek TSV log (conn.log.labeled): '#fields' line gives columns,
+    '#' lines are comments, tab-separated, '-' means empty."""
+    fields = None
+    with open(path, "r", errors="ignore") as f:
+        for line in f:
+            if line.startswith("#fields"):
+                fields = line.rstrip("\n").split("\t")[1:]
+                break
+    if not fields:
+        return pd.DataFrame()
+    df = pd.read_csv(path, sep="\t", comment="#", names=fields,
+                     na_values="-", low_memory=False)
+    return df
+
+
+def load_iot23(root, max_rows_per_file=60_000):
+    """IoT-23 — real IoT malware Zeek conn.log.labeled files.
+    The 'small' archive ships labeled connection logs (no pcaps needed).
+    Activates once iot_23_datasets_small.tar.gz is extracted under Datasets/IoT23.
+    """
+    files = glob.glob(os.path.join(root, "IoT23", "**", "*conn.log.labeled"),
+                      recursive=True)
+    if not files:
+        raise FileNotFoundError("IoT-23 conn.log.labeled files not found — "
+                                "extract iot_23_datasets_small.tar.gz first")
+    dfs = []
+    for fp in files:
+        t = _read_zeek(fp)
+        if len(t):
+            if max_rows_per_file and len(t) > max_rows_per_file:
+                t = t.sample(max_rows_per_file, random_state=RS)
+            dfs.append(t)
+    df = pd.concat(dfs, ignore_index=True)
+    df.columns = [c.strip() for c in df.columns]
+    # label column: 'label' = Benign/Malicious; 'detailed-label' = attack type
+    lab = df.get("label", pd.Series(["Benign"] * len(df))).astype(str).str.strip()
+    y = (lab.str.lower() != "benign").astype(int)
+    det = df.get("detailed-label", lab).astype(str)
+    cat = det.where(det.str.lower() != "-", lab).map(to_category)
+    fmap = {"Flow Duration": "duration", "Total Fwd Packets": "orig_pkts",
+            "Total Backward Packets": "resp_pkts",
+            "Total Length of Fwd Packets": "orig_bytes",
+            "Total Length of Bwd Packets": "resp_bytes",
+            "Flow Packets/s": "orig_ip_bytes", "Fwd Packets/s": "missed_bytes",
+            "Bwd Packets/s": "resp_ip_bytes",
+            "Min Packet Length": "id.orig_p", "Max Packet Length": "id.resp_p",
+            "Packet Length Mean": None, "Packet Length Std": None}
+    return _finish(df, fmap, y, cat, "iot_23")
+
+
 def load_wustl(root):
     """WUSTL-IIoT-2021 — Argus industrial-control flow CSV."""
     f = os.path.join(root, "WUSTL_IIoT_2021", "wustl_iiot_2021.csv")
@@ -280,7 +332,7 @@ LOADERS = {
     "bot_iot": load_botiot, "cicddos2019": load_cicddos2019,
     "iotid20": load_iotid20, "x_iiotid": load_xiiotid,
     "mqtt_iot_ids2020": load_mqtt, "cic_iot_2023": load_ciciot2023,
-    "wustl_iiot": load_wustl,
+    "wustl_iiot": load_wustl, "iot_23": load_iot23,
 }
 # Lossy (no direction / no duration) — usable but flagged.
 LOSSY = {"mqtt_iot_ids2020", "cic_iot_2023"}
@@ -316,6 +368,9 @@ def available(root=DEFAULT_ROOT):
                 ok = bool(glob.glob(os.path.join(root, "CICIoT2023", "*.csv")))
             elif name == "wustl_iiot":
                 ok = os.path.exists(os.path.join(root, "WUSTL_IIoT_2021", "wustl_iiot_2021.csv"))
+            elif name == "iot_23":
+                ok = bool(glob.glob(os.path.join(root, "IoT23", "**", "*conn.log.labeled"),
+                                    recursive=True))
             else:
                 ok = False
         except Exception:

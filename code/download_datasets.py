@@ -136,7 +136,8 @@ def kaggle_fetch():
 
 
 def direct_fetch():
-    """Fetch datasets that have an auth-free direct URL (wget, resumable)."""
+    """Fetch datasets that have an auth-free direct URL (wget, resumable),
+    then extract any downloaded archive so the loaders can see the files."""
     for url, subdir, note, flags in DIRECT_SOURCES:
         dest = os.path.join(DS, subdir)
         os.makedirs(dest, exist_ok=True)
@@ -148,8 +149,29 @@ def direct_fetch():
         rc = subprocess.call(cmd)
         if rc != 0:
             print(f"[warn] direct download failed for {subdir} (rc={rc}); "
-                  f"note: the IoT-23 host is slow — the download is resumable, "
-                  f"re-run to continue.")
+                  f"the IoT-23 host is slow — the download is resumable, re-run.")
+            continue
+        _extract_archives(dest)
+
+
+def _extract_archives(dest):
+    """Extract .tar.gz / .zip found in dest (idempotent-ish)."""
+    import tarfile, zipfile
+    for arc in glob.glob(os.path.join(dest, "*.tar.gz")) + \
+               glob.glob(os.path.join(dest, "*.tgz")):
+        try:
+            print(f"  extracting {os.path.basename(arc)} ...")
+            with tarfile.open(arc) as tf:
+                tf.extractall(dest)
+        except Exception as e:
+            print(f"  [warn] extract failed: {e}")
+    for arc in glob.glob(os.path.join(dest, "*.zip")):
+        try:
+            print(f"  extracting {os.path.basename(arc)} ...")
+            with zipfile.ZipFile(arc) as zf:
+                zf.extractall(dest)
+        except Exception as e:
+            print(f"  [warn] extract failed: {e}")
 
 
 def main():

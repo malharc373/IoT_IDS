@@ -194,6 +194,26 @@ def t_dashboard():
         srv.shutdown()
 
 
+def t_multidataset_taxonomy():
+    # taxonomy normalization is data-free and must be stable
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mds", os.path.join(ROOT, "code", "multidataset.py"))
+    mds = importlib.util.module_from_spec(spec); spec.loader.exec_module(mds)
+    assert mds.to_category("BENIGN") == "benign"
+    assert mds.to_category("Mirai-UDP Flooding") == "botnet"
+    assert mds.to_category("DrDoS_DNS") == "dos"
+    assert mds.to_category("Port Scan") == "recon"
+    assert mds.to_category("SSH-Patator") == "bruteforce"
+    assert mds.to_category("MITM ARP Spoofing") == "spoofing"
+    assert len(mds.UNIFIED_FEATURES) == 12
+    # if the datasets happen to be present, one loader must align to 12 features
+    present = mds.available()
+    if present:
+        df = mds.load(present[0])
+        assert list(df.columns[:12]) == mds.UNIFIED_FEATURES
+        assert set(df["y"].unique()) <= {0, 1}
+
+
 def t_dataset_maps():
     import importlib.util
     spec = importlib.util.spec_from_file_location("dm", os.path.join(ROOT, "code", "dataset_maps.py"))
@@ -285,16 +305,20 @@ def t_daemon_help():
 
 # ── 7. SFAF reproduction pipeline (no datasets) ───────────────────────────────
 def t_sfaf_trainer_guard():
-    # load_datasets must fail cleanly (SystemExit) when datasets are absent
-    import importlib.util
+    # When datasets are absent, load_datasets() must fail cleanly (SystemExit).
+    # When present (e.g. via the Datasets symlink), it must load without error.
+    import importlib.util, glob
     spec = importlib.util.spec_from_file_location(
         "m02", os.path.join(ROOT, "code", "02_train_sfaf.py"))
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+    has_data = bool(glob.glob(os.path.join(ROOT, "Datasets", "MachineLearningCVE", "*.csv")))
     try:
         m.load_datasets()
-        raise AssertionError("expected SystemExit without datasets")
+        if not has_data:
+            raise AssertionError("expected SystemExit without datasets")
     except SystemExit:
-        pass
+        if has_data:
+            raise AssertionError("unexpected SystemExit though datasets present")
 
 
 def t_sfaf_onnx_export():
@@ -358,6 +382,7 @@ def main():
         ("ips responder", t_ips_responder),
         ("c export + compile", t_c_export),
         ("dataset alignment (SFAF)", t_dataset_maps),
+        ("multidataset taxonomy", t_multidataset_taxonomy),
         ("web dashboard", t_dashboard),
         ("detector classify known", t_detector_classify_known),
         ("daemon offline mode", t_daemon_offline),

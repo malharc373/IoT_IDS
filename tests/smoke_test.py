@@ -358,6 +358,16 @@ def t_shell_syntax():
         assert r.returncode == 0, f"{sh}: {r.stderr}"
 
 
+def t_benchmark_params():
+    # the benchmark's param/footprint section must run (fast, no full sweep)
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("bench", os.path.join(ROOT, "demo", "benchmark.py"))
+    b = importlib.util.module_from_spec(spec); spec.loader.exec_module(b)
+    meta, sizes, n_trees, n_nodes = b.bench_params()
+    assert n_trees > 0 and n_nodes > 0
+    assert "live_ids.onnx" in sizes and sizes["live_ids.onnx"] > 0
+
+
 def t_systemd_unit_sane():
     txt = open(os.path.join(ROOT, "deploy", "iot-ids.service")).read()
     assert "[Service]" in txt and "ids_daemon.py" in txt and "--iface" in txt
@@ -393,6 +403,7 @@ def main():
         ("SFAF onnx export", t_sfaf_onnx_export),
         ("download_datasets runs", t_download_datasets_runs),
         ("shell script syntax", t_shell_syntax),
+        ("benchmark params", t_benchmark_params),
         ("systemd unit sane", t_systemd_unit_sane),
     ]
     for name, fn in tests:

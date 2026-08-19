@@ -16,29 +16,36 @@ Supersedes [[EXP01 - Cross-dataset study baseline]].
 ## Setup
 
 ```bash
-python code/cross_dataset_eval.py --cap 50000     # 10 datasets, 90 ordered pairs
+python code/cross_dataset_eval.py --cap 50000     # 11 datasets, 110 ordered pairs
 python code/transfer_experiment.py --cap 25000    # LODO over 7 transforms
 ```
 
-- 10 datasets present (IoT-23 archive not extracted, so 10 of the 11 loaders ran)
+- **11 datasets** (IoT-23 extracted 2026-08-20 — see [[F19 - IoT-23 labels parsed as all-benign]])
 - 50k rows/dataset, class-balanced where the source allows
 - XGBoost, 120 trees, depth 6, lr 0.3 — identical to the pre-fix run
 - NaN preserved end-to-end for structurally absent features
 
 ## Headline
 
+Eleven datasets, 110 ordered train×test pairs:
+
 | metric | in-domain | cross-domain | gap | chance |
 |---|---|---|---|---|
-| **ROC-AUC** | 0.996 | **0.514** | 0.482 | 0.500 |
-| AP | 0.996 | 0.627 | 0.369 | = prevalence |
-| **MCC** | 0.959 | **−0.002** | 0.961 | 0.000 |
-| balanced acc | 0.979 | 0.496 | 0.483 | 0.500 |
-| F1 | 0.979 | 0.440 | 0.539 | 2p/(1+p) |
+| **ROC-AUC** | 0.995 | **0.509** | 0.487 | 0.500 |
+| AP | 0.996 | 0.620 | 0.376 | = prevalence |
+| **MCC** | 0.958 | **−0.007** | 0.965 | 0.000 |
+| balanced acc | 0.978 | 0.494 | 0.484 | 0.500 |
+| F1 | 0.979 | 0.438 | 0.540 | 2p/(1+p) |
 
 ```
-off-diagonal cells at or below the trivial all-attack baseline: 72/90 (80%)
-off-diagonal cells with ROC-AUC <= 0.55 (no usable signal)     : 50/90 (56%)
+off-diagonal cells at or below the trivial all-attack baseline: 89/110 (81%)
+off-diagonal cells with ROC-AUC <= 0.55 (no usable signal)     : 60/110 (55%)
 ```
+
+> The ten-dataset run gave AUC 0.514 / MCC −0.002 over 90 pairs. Adding IoT-23
+> moved nothing: 0.509 / −0.007 over 110. The finding is stable to the sample
+> of datasets, which is what makes it a claim about the problem rather than
+> about a particular corpus.
 
 ## What changed versus EXP01, and what didn't
 
@@ -49,7 +56,7 @@ Before the fix you could not tell whether the gap was domain shift or a bug in
 
 **Changed: the gap is deeper than reported.** EXP01 said cross-domain F1 = 0.45
 versus 0.98 in-domain. That framing implies a degraded-but-present detector.
-The corrected measurement says cross-domain **MCC = −0.002, AUC = 0.514** —
+The corrected measurement says cross-domain **MCC = −0.007, AUC = 0.509** —
 there is no detector at all between arbitrary dataset pairs. Much of the old
 0.45 was composed of degenerate all-attack predictors banking F1 ≈ 0.667.
 
@@ -61,19 +68,37 @@ In the corrected AUC matrix it carries no special status.
 `log_quantile` gave "a real, free improvement" lifting LODO F1 from 0.544 to
 0.589. Measured threshold-free, that improvement is noise:
 
-| transform | AUC | AP | MCC | bal acc | F1 | F1 lift |
-|---|---|---|---|---|---|---|
-| log_quantile | 0.569 | 0.650 | 0.042 | 0.533 | 0.375 | −0.325 |
-| log_standard | 0.567 | 0.648 | 0.014 | 0.519 | 0.369 | −0.331 |
-| raw_standard (baseline) | 0.558 | 0.666 | 0.082 | 0.532 | 0.415 | −0.285 |
-| quantile | 0.542 | 0.656 | 0.064 | 0.518 | 0.393 | −0.307 |
-| ratios_log | 0.533 | 0.676 | 0.065 | 0.521 | 0.444 | −0.256 |
-| log_robust | 0.529 | 0.638 | 0.061 | 0.535 | 0.387 | −0.313 |
-| ratios_standard | 0.456 | 0.598 | −0.012 | 0.479 | 0.330 | −0.370 |
+Leave-one-dataset-out over all eleven, with the fold-to-fold spread — because a
+mean of eleven wildly different folds is not a point estimate:
 
-Every transform sits between AUC 0.46 and 0.57 against a chance baseline of
-0.50, with MCC ≤ 0.08. **Every single one is below the trivial F1 baseline.**
-The best-versus-baseline AUC lift is +0.011 — well inside run-to-run noise.
+| transform | AUC | ±sd | worst fold | folds >0.55 | MCC | F1 | F1 lift |
+|---|---|---|---|---|---|---|---|
+| log_standard | 0.640 | 0.227 | 0.152 | 8/11 | 0.118 | 0.473 | −0.224 |
+| log_robust | 0.566 | 0.249 | 0.124 | 6/11 | 0.056 | 0.443 | −0.254 |
+| ratios_log | 0.548 | 0.216 | 0.144 | 6/11 | 0.087 | 0.442 | −0.255 |
+| raw_standard (baseline) | 0.523 | 0.238 | 0.133 | 7/11 | 0.040 | 0.401 | −0.296 |
+| ratios_standard | 0.505 | 0.194 | 0.106 | 6/11 | 0.011 | 0.348 | −0.349 |
+| quantile | 0.502 | 0.238 | 0.142 | 6/11 | 0.031 | 0.397 | −0.300 |
+| log_quantile | 0.496 | 0.245 | 0.089 | 5/11 | −0.003 | 0.385 | −0.312 |
+
+`log_standard` looks like a real winner at +0.118 AUC over the baseline — until
+the spread is read: **sd 0.227 across folds, worst fold 0.152**, and only 8 of
+11 folds clear AUC 0.55. The lift is smaller than the fold-to-fold variation,
+so it is not distinguishable from *which datasets happen to be held out*. The
+script now says so automatically:
+
+```
+NOTE: the lift is smaller than the fold-to-fold spread — it is not
+      distinguishable from which datasets happen to be held out.
+```
+
+Every transform is still below the trivial F1 baseline, and MCC never exceeds
+0.12.
+
+> This is the same lesson as [[F02 - Cross-domain F1 includes degenerate classifiers]]
+> in a different costume: on the ten-dataset run the best-vs-baseline lift was
+> +0.011 and looked like noise; on eleven it was +0.118 and looked like a
+> result. Neither reading was safe without the variance.
 
 This is a cleaner conclusion than EXP01's, and it is the one the write-up
 already wanted to reach: *a fixed, deployable feature transform does not close
@@ -93,18 +118,21 @@ on each held-out dataset:
 | x_iiotid | 0.706 | 0.764 | 0.321 | 0.660 | 0.667 | 0.667 | +0.000 | 0.359 |
 | iotid20 | 0.606 | 0.597 | 0.080 | 0.518 | 0.135 | 0.667 | −0.532 | 0.038 |
 | **wustl_iiot** | **0.314** | 0.566 | −0.583 | 0.225 | 0.337 | 0.667 | −0.330 | 0.943 |
+| **iot_23** | **0.195** | 0.411 | 0.151 | 0.532 | 0.678 | 0.667 | +0.011 | 0.919 |
 
 Three distinct regimes, indistinguishable under F1 alone:
 
 1. **Genuine transfer** — `mqtt_iot_ids2020`, AUC 0.99 / F1 0.94 / FPR 0.00.
 2. **Ranking transfers, threshold does not** — `cicddos2019`, AUC **0.927** but
    F1 only 0.561 at a 0.5 cut (recall 0.41). The model orders that domain's
-   attacks nearly perfectly; only the operating point is wrong. A few hundred
-   labelled target flows would recover most of this. **This is the single most
-   actionable result in the study** and EXP01's metrics could not see it.
-3. **Inverted transfer** — `wustl_iiot`, AUC **0.314**, i.e. reliably *worse*
-   than chance, with FPR 0.94. A systematic polarity flip, not absence of
-   signal. Worth tracing to a specific feature.
+   attacks nearly perfectly; only the operating point is wrong. **Ten** labelled
+   target flows recover 89% of that gap — measured in
+   [[EXP03 - Threshold transfer]]. **This is the single most actionable result
+   in the study** and EXP01's metrics could not see it.
+3. **Inverted transfer** — `wustl_iiot` (AUC **0.314**, FPR 0.94) and
+   `iot_23` (AUC **0.195**, FPR 0.92): reliably *worse* than chance. A
+   systematic polarity flip, not absence of signal — inverting the decision
+   would give 0.686 and 0.805. Two independent datasets make it a pattern.
 
 ## Artifacts written
 
@@ -115,13 +143,15 @@ demo/results/cross_dataset_lift_matrix.csv           <- F1 minus trivial
 demo/results/cross_dataset_metrics_long.csv          <- every metric, tidy
 demo/results/cross_dataset_heldout.csv
 demo/results/transfer_comparison.csv
+demo/results/threshold_transfer.csv                  <- EXP03
 ```
 
 ## Follow-ups
 
-- Threshold transfer study on the `cicddos2019` regime — how many labelled
-  target flows are needed to recover AUC-implied performance?
-- Trace the `wustl_iiot` polarity inversion to a feature.
+- ~~Threshold transfer study on the `cicddos2019` regime~~ — **done**:
+  [[EXP03 - Threshold transfer]]. Ten labelled flows recover 89% of the gap
+  where AUC is high, and nothing where it is not.
+- Trace the `wustl_iiot` / `iot_23` polarity inversion to a feature.
 - Real domain adaptation (CORAL, per-domain quantile normalisation at test
   time, adversarial domain-invariant encoder) — see [[Future Work]].
 

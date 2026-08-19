@@ -26,22 +26,28 @@ pcaps. Extract `iot_23_datasets_small.tar.gz`, run the pcaps through the same
 22-feature pipeline, and report per-family recall. This single experiment
 converts "99.99% on synthetic" into a number that survives a viva.
 
-### 2. Threshold transfer on the CICDDoS2019 regime
+### ~~2. Threshold transfer on the CICDDoS2019 regime~~ — **done**
 
-The most actionable result in [[EXP02 - Corrected alignment rerun]]: pooled
-training reaches **AUC 0.927 but F1 0.561** on held-out CICDDoS2019. The
-ranking transfers almost perfectly; only the operating point fails.
+[[EXP03 - Threshold transfer]] (`code/threshold_transfer.py`). The answer was
+better than "a few hundred": **ten** labelled flows recover 89% of the gap
+(F1 0.561 → 0.868 against a 0.905 ceiling), and the curve is flat past fifty.
 
-Measure how many labelled target-domain flows are needed to re-fit a threshold
-and recover the AUC-implied performance. If the answer is "a few hundred", that
-is a cheap, deployable domain-adaptation story — and one the old F1-only view
-could not even see.
+It works wherever AUC is high and nowhere else — on the low-AUC domains the
+best achievable threshold *is* the all-attack classifier. That yields a
+practical rule: measure AUC on the target first; high AUC is a ten-label
+calibration problem, low or inverted AUC is a representation problem.
 
-### 3. Trace the WUSTL-IIoT polarity inversion
+Remaining follow-up: calibrate a *probability* (Platt/isotonic on the target
+sample) rather than a threshold, which would also address
+[[F09 - IPS gate uses uncalibrated confidence]].
 
-Pooled-trained AUC **0.314** — reliably *worse* than chance, FPR 0.94. That is
-not absence of signal, it is a systematic flip. Per-feature SHAP against a
-transferring dataset should localise it. A named cause here is a genuine
+### 3. Trace the polarity inversion — now on two datasets
+
+Pooled-trained AUC **0.314** on WUSTL-IIoT and **0.195** on IoT-23 — both
+reliably *worse* than chance (FPR 0.94 and 0.92). Inverting the decision would
+give 0.686 and 0.805, so the information is present with reversed polarity.
+Two independent datasets make this a pattern, not a quirk. Per-feature SHAP
+against a transferring dataset should localise it; a named cause is a genuine
 contribution.
 
 ### 4. Real domain adaptation
@@ -56,8 +62,9 @@ seven land between AUC 0.46 and 0.57 against chance 0.50). The next tier:
 - **Adversarial domain-invariant encoder** — a gradient-reversal head over the
   12 features
 
-`code/transfer_experiment.py` already has the LODO harness and the metric set,
-so each is a contained experiment.
+`code/transfer_experiment.py` already has the LODO harness and the metric set
+(now including fold-to-fold spread, which is what showed the signed-log "win"
+to be within noise), so each is a contained experiment.
 
 ### 5. Unknown-attack handling
 
@@ -83,13 +90,12 @@ so real data has to come first.
 hardware path is built and the services install; one real run replaces a guessed
 constant in the results table with a measured one.
 
-### 8. Inline (bridge) deployment guide
+### ~~8. Inline (bridge) deployment guide~~ — **done**
 
-[[F06 - IPS only protects the sensor not the network]] added `--ips-scope
-network` (INPUT + FORWARD), but making the Pi actually inline — `br0`,
-`net.ipv4.ip_forward`, failing open on daemon death — is a deployment
-procedure that belongs in `deploy/README_PI.md`. Without it, `scope=network` is
-correct code with no instructions.
+`deploy/README_PI.md` §6 now covers both topologies: what a mirror-port sensor
+can and cannot stop, a full systemd-networkd bridge setup with
+`br_netfilter` / `bridge-nf-call-iptables`, the fail-open caveat, and
+verification via `nft list table inet iot_ids`.
 
 ### 9. Confidence on the MCU path
 
@@ -98,26 +104,24 @@ cannot honour any confidence gate ([[F16 - Moderate issues roundup]] item 7).
 Emitting the margin, or a fixed-point softmax, would let the MCU apply the same
 policy as the Python path.
 
-### 10. CI + pytest
+### ~~10. CI + pytest~~ — **done**
 
-`tests/smoke_test.py` is a hand-rolled runner (37 checks, all passing).
-Converting to pytest and adding a GitHub Action would catch regressions
-automatically — including the alignment contract, the export parity guards and
-the credential-literal scan, which are exactly the checks that only help if
-they run on every push.
+`tests/test_suite.py` parametrizes pytest over the same registry the standalone
+runner uses, and `.github/workflows/ci.yml` runs the suite, an artifact-contract
+assertion, a gcc compile-and-run of the C model, and the end-to-end demo on
+every push.
 
-### 11. Drop the scaler from the SFAF edge model too
+### ~~11. Drop the scaler from the SFAF edge model too~~ — **done**
 
-`code/02_train_sfaf.py` still trains through a `StandardScaler`. Its export
-verifies at 100%, so this is not urgent — but the same scale-invariance
-argument from [[F18 - Pipeline ONNX export silently ships a broken model]]
-applies, and removing it would eliminate the same class of fragility.
+Done — it trains on raw features and converts the classifier directly, like the
+live model.
 
 ### 12. Nice-to-have
 
-- syslog / CEF export so the sensor can talk to a real SIEM
-- pcapng reader (modern `tshark`/`dumpcap` emit it by default; only classic
-  pcap is supported)
+- ~~syslog / CEF export~~ — **done**: `--syslog HOST[:PORT]`,
+  `--syslog-format cef|json`, best-effort delivery
+- ~~pcapng reader~~ — **done**: the old reader *mis-parsed* pcapng rather than
+  rejecting it; `read_pcap` now dispatches and raises on unknown formats
 - per-class alert thresholds instead of one global `--min-conf`
 - an ESP32 flash-and-run example in `deploy/README_MCU.md`
 

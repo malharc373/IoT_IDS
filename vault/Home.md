@@ -57,7 +57,8 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 ## Experiments
 
 - [[EXP01 - Cross-dataset study baseline]] — the numbers as they stood pre-fix
-- [[EXP02 - Corrected alignment rerun]]
+- [[EXP02 - Corrected alignment rerun]] — the definitive 11-dataset result
+- [[EXP03 - Threshold transfer]] — ten labelled flows recover 89% of the gap, where AUC is high
 
 ## Reference
 
@@ -70,5 +71,5 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 
 - 19 findings: 18 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
 - Test suite **40 passed / 0 failed** (was 23/1 before the review)
-- Headline research number corrected: cross-domain **ROC-AUC 0.514** against a
-  chance baseline of 0.500 — see [[EXP02 - Corrected alignment rerun]]
+- Headline research number corrected: cross-domain **ROC-AUC 0.509** against a
+  chance baseline of 0.500 over 110 dataset pairs — see [[EXP02 - Corrected alignment rerun]]

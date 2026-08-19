@@ -14,14 +14,15 @@ network attacks in real time on cheap hardware*:
    incidents, and can **actively block** offenders (IPS mode). The same model
    also compiles to a **dependency-free C header** for microcontrollers.
 
-2. **SFAF cross-dataset study** — ten public IDS datasets (CICIDS2017, UNSW-NB15,
-   TON-IoT, Bot-IoT, CIC-IoT-2023, CICDDoS2019, IoTID20, X-IIoTID,
-   MQTT-IoT-IDS2020, WUSTL-IIoT) aligned into one 12-feature space to measure —
+2. **SFAF cross-dataset study** — eleven public IDS datasets (CICIDS2017,
+   UNSW-NB15, TON-IoT, Bot-IoT, CIC-IoT-2023, CICDDoS2019, IoTID20, X-IIoTID,
+   MQTT-IoT-IDS2020, WUSTL-IIoT, IoT-23) aligned into one 12-feature space to measure —
    not assert — how well flow behaviour transfers across labs/devices/tools. The
-   honest finding: **in-domain ROC-AUC 0.996 vs cross-domain 0.514** against a
-   chance baseline of 0.500, with MCC −0.002 — between arbitrary dataset pairs a
+   honest finding: **in-domain ROC-AUC 0.995 vs cross-domain 0.509** against a
+   chance baseline of 0.500, with MCC −0.007 — between arbitrary dataset pairs a
    supervised detector transfers *at chance*. No fixed feature transform closes
-   it. This *is* the overfitting problem, quantified. See
+   it, but where the ranking *does* survive, **ten labelled target flows** fix
+   the operating point. This *is* the overfitting problem, quantified. See
    [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
 ```
@@ -153,30 +154,35 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 
 ### Cross-dataset generalization (the honest real-world number)
 
-Ten datasets aligned to the 12-feature space, trained on one and tested on
+Eleven datasets aligned to the 12-feature space, trained on one and tested on
 *others* (no leaky merged split — `code/cross_dataset_eval.py`). Reported with
 ROC-AUC and MCC rather than F1, because each test set is ~50/50 balanced and a
 classifier that answers "attack" to everything scores F1 = 0.667:
 
 | metric | in-domain | cross-domain | chance |
 |---|---|---|---|
-| **ROC-AUC** | **0.996** | **0.514** | 0.500 |
-| **MCC** | **0.959** | **−0.002** | 0.000 |
-| Balanced accuracy | 0.979 | 0.496 | 0.500 |
-| Binary F1 | 0.979 | 0.440 | 2p/(1+p) |
+| **ROC-AUC** | **0.995** | **0.509** | 0.500 |
+| **MCC** | **0.958** | **−0.007** | 0.000 |
+| Balanced accuracy | 0.978 | 0.494 | 0.500 |
+| Binary F1 | 0.979 | 0.438 | 2p/(1+p) |
 
-80% of the 90 ordered dataset pairs score at or below the trivial all-attack
-baseline, and 56% sit at ROC-AUC ≤ 0.55. A CICIDS-only model scores 0.98
+81% of the 110 ordered dataset pairs score at or below the trivial all-attack
+baseline, and 55% sit at ROC-AUC ≤ 0.55. A CICIDS-only model scores 0.98
 in-domain and collapses everywhere else — it memorises artifacts, not attack
-behaviour. **No fixed feature transform helps**: all seven tested land between
-AUC 0.46 and 0.57 (`code/transfer_experiment.py`), so genuine domain adaptation
-is the open problem.
+behaviour. **No fixed feature transform helps**: the best of seven gains +0.118
+AUC over the baseline, against a fold-to-fold spread of 0.227
+(`code/transfer_experiment.py`), so the gain is not distinguishable from which
+datasets get held out.
 
-One exception is worth the whole study: pooled-trained, held out on CICDDoS2019,
-the model reaches **AUC 0.927 but F1 0.561** — the ranking transfers almost
-perfectly and only the decision threshold fails. A small labelled calibration
-sample from the target domain would recover most of that. Full study + heatmaps
-in [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
+**But the gap is not uniform, and part of it is cheap.** Pooled-trained and held
+out on CICDDoS2019, the model reaches **AUC 0.927 but F1 0.561** — the ranking
+transfers almost perfectly and only the decision threshold fails. Fitting *just
+that threshold* on **ten labelled target flows** takes F1 to **0.868**, 89% of
+the way to the 0.905 ceiling (`code/threshold_transfer.py`). It works wherever
+AUC is high and nowhere else, which gives a practical rule: **measure AUC on the
+target domain first** — high AUC is a ten-label calibration problem, low or
+inverted AUC is a representation problem. Full study + heatmaps in
+[`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
 ### System benchmark (Apple M4; `python demo/benchmark.py`)
 
@@ -200,7 +206,12 @@ and auth-free direct URLs:
 python code/download_datasets.py --direct   # Kaggle + IoT-23/WUSTL, or prints links
 python code/multidataset.py                 # verify alignment of all present datasets
 python code/cross_dataset_eval.py           # run the generalization study
+python code/threshold_transfer.py           # how cheap is target-domain calibration
 ```
+
+IoT-23 ships as `iot_23_datasets_small.tar.gz`; extract it under
+`Datasets/IoT23/` before use. Its sampled frame is cached beside the data, so
+only the first run pays the ~27 GB parse.
 
 ---
 
@@ -234,6 +245,7 @@ code/
                        truth for feature alignment (units, coverage, NaN policy)
   cross_dataset_eval.py train-on-one/test-on-others generalization matrix
   transfer_experiment.py deployable feature transforms to close the transfer gap
+  threshold_transfer.py how many labelled target flows fix the operating point
   02_train_sfaf.py     headless SFAF reproduction (regenerates thesis artifacts)
   download_datasets.py dataset fetch (Kaggle + auth-free direct URLs)
   *.ipynb              EDA / SFAF / edge-deployment notebooks (historical

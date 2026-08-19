@@ -168,6 +168,13 @@ def lodo(data, transform):
         acc["benign_fpr"].append(float((p[neg] == 1).mean()) if neg.any() else np.nan)
     out = {k: float(np.nanmean(v)) for k, v in acc.items()}
     out["f1_lift"] = out["f1"] - out["f1_trivial"]
+    # LODO averages a handful of folds whose difficulty varies enormously, so a
+    # bare mean hides whether a "lift" is a real effect or one lucky held-out
+    # dataset. Report the spread and the worst fold alongside it.
+    out["roc_auc_std"] = float(np.nanstd(acc["roc_auc"]))
+    out["roc_auc_min"] = float(np.nanmin(acc["roc_auc"]))
+    out["n_folds_above_chance"] = int(sum(1 for v in acc["roc_auc"] if v > 0.55))
+    out["n_folds"] = len(acc["roc_auc"])
     return out
 
 
@@ -187,15 +194,17 @@ def main():
     print(f"  {len(data)} datasets, {sum(len(d) for d in data.values()):,} rows\n")
 
     rows = []
-    print(f"{'transform':<18}{'AUC':>8}{'AP':>8}{'MCC':>8}{'balAcc':>8}"
-          f"{'F1':>8}{'lift':>8}{'FPR':>8}")
+    print(f"{'transform':<18}{'AUC':>8}{'±sd':>7}{'worst':>7}{'>chance':>9}"
+          f"{'MCC':>8}{'F1':>8}{'lift':>8}")
     print("-" * 74)
     for t in TRANSFORMS:
         m = lodo(data, t)
-        rows.append({"transform": t, **{k: round(v, 4) for k, v in m.items()}})
-        print(f"{t:<18}{m['roc_auc']:>8.3f}{m['ap']:>8.3f}{m['mcc']:>8.3f}"
-              f"{m['bal_acc']:>8.3f}{m['f1']:>8.3f}{m['f1_lift']:>+8.3f}"
-              f"{m['benign_fpr']:>8.3f}")
+        rows.append({"transform": t, **{k: round(v, 4) if isinstance(v, float) else v
+                                        for k, v in m.items()}})
+        print(f"{t:<18}{m['roc_auc']:>8.3f}{m['roc_auc_std']:>7.3f}"
+              f"{m['roc_auc_min']:>7.3f}"
+              f"{m['n_folds_above_chance']:>6}/{m['n_folds']:<2}"
+              f"{m['mcc']:>8.3f}{m['f1']:>8.3f}{m['f1_lift']:>+8.3f}")
     dfres = pd.DataFrame(rows).sort_values("roc_auc", ascending=False)
     dfres.to_csv(os.path.join(RESULTS, "transfer_comparison.csv"), index=False)
 
@@ -203,9 +212,18 @@ def main():
     base = dfres[dfres["transform"] == "raw_standard"].iloc[0]
     print("-" * 74)
     print(f"\nRanked by ROC-AUC (threshold-free). Chance = 0.500, MCC chance = 0.000.")
+    lift = best["roc_auc"] - base["roc_auc"]
     print(f"best: {best['transform']} AUC={best['roc_auc']:.3f} "
-          f"vs baseline raw_standard AUC={base['roc_auc']:.3f} "
-          f"(lift {best['roc_auc']-base['roc_auc']:+.3f})")
+          f"(sd {best['roc_auc_std']:.3f} across {int(best['n_folds'])} folds, "
+          f"worst fold {best['roc_auc_min']:.3f}) "
+          f"vs baseline raw_standard AUC={base['roc_auc']:.3f} (lift {lift:+.3f})")
+    if lift < best["roc_auc_std"]:
+        print("NOTE: the lift is smaller than the fold-to-fold spread — it is "
+              "not distinguishable from which datasets happen to be held out.")
+    if best["n_folds_above_chance"] <= best["n_folds"] // 2:
+        print(f"NOTE: only {int(best['n_folds_above_chance'])} of "
+              f"{int(best['n_folds'])} held-out folds clear AUC 0.55, so the "
+              f"mean is carried by a minority of easy targets.")
     if best["f1_lift"] <= 0:
         print("WARNING: the best transform's F1 is at or below the trivial "
               "all-attack baseline — treat any F1-based claim as degenerate.")

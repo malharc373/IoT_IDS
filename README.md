@@ -195,7 +195,8 @@ src/
   flow_features.py     packet→flow→22-feature extractor (train == serve)
   train_live_model.py  train the edge model; export ONNX + booster + meta
   ids_daemon.py        the IDS/IPS: --pcap / --replay / --iface, --ips/--prevent
-  ips_response.py      active response: block/rate-limit (nftables/iptables)
+  ips_response.py      active response ladder: monitor/throttle/block, scoped
+                       to INPUT (host) or INPUT+FORWARD (inline network)
   dashboard.py         live web dashboard (stdlib http.server, reads alert feed)
   export_c.py          compile the model to a dependency-free C header (MCUs)
 attacks/
@@ -241,9 +242,19 @@ ports, one host) from a Mirai spread (one port, many hosts) from a flood
 Verdicts are aggregated into per-`(source, type)` **incidents**, so a 500-port
 scan is one alert.
 
-The **IPS layer** (`--ips` dry-run, `--prevent` enforce) blocks high-confidence
-sources via nftables/iptables with a confidence gate, allowlist, and auto-expiry
-— it degrades safely to dry-run when it can't enforce.
+The **IPS layer** (`--ips` dry-run, `--prevent` enforce) responds on a ladder —
+*monitor → throttle → block* — via nftables/iptables, with an allowlist and
+auto-expiry, degrading safely to dry-run when it can't enforce.
+
+Two flags matter for correctness:
+
+- `--ips-scope host` (default) installs INPUT rules and protects **only the
+  sensor**. A passive sensor on a mirror port cannot stop an attack on another
+  device. Use `--ips-scope network` (INPUT + FORWARD) when the Pi is inline.
+- `--ips-strikes 3` requires that many corroborating incidents within
+  `--ips-strike-window` seconds before blocking, because the model's softmax
+  confidence is **not calibrated** — a reported 0.99 is not a 99% guarantee.
+  Below the strike count the source is rate-limited rather than blackholed.
 
 > **Authorized-use only.** The attack generators and tool commands produce
 > hostile traffic; confine them to hardware you own (your Pi + host).

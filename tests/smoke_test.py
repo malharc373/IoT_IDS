@@ -239,14 +239,50 @@ def t_model_artifacts():
 
 
 def t_ips_responder():
+    """Graduated response + corroboration gate (vault/Findings/F06, F08, F09)."""
     from ips_response import Responder
     r = Responder(mode="dry-run", min_conf=0.9, block_seconds=60,
-                  allowlist=["10.0.0.0/8"],
+                  allowlist=["10.0.0.0/8"], strikes=3, strike_window=120,
                   state_path=os.path.join(TMP, "ips_state.json"))
-    assert r.handle("203.0.113.9", "synflood", 0.99)["action"] == "would-block"
+    # confidence is uncalibrated, so one high score only throttles
+    a = r.handle("203.0.113.9", "synflood", 0.99)
+    assert a["action"] == "throttle" and a["strikes"] == 1, a
+    a = r.handle("203.0.113.9", "synflood", 0.99)
+    assert a["action"] == "throttle" and a["strikes"] == 2, a
+    # third corroborating sighting escalates to a block
+    a = r.handle("203.0.113.9", "synflood", 0.99)
+    assert a["action"] == "would-block" and a["strikes"] == 3, a
     assert r.handle("203.0.113.9", "synflood", 0.99)["action"] == "already-blocked"
+    # gates that short-circuit before the ladder
     assert r.handle("10.1.2.3", "portscan", 0.99)["action"] == "skip"
     assert r.handle("198.51.100.4", "portscan", 0.5)["action"] == "monitor"
+
+    st = r.status()
+    assert st["scope"] == "host" and "this sensor only" in st["protects"]
+    assert st["active_blocks"] == 1 and st["active_throttles"] == 0
+
+    # strikes=1 restores immediate blocking for callers that want it
+    r1 = Responder(mode="dry-run", min_conf=0.9, strikes=1,
+                   state_path=os.path.join(TMP, "ips_state1.json"))
+    assert r1.handle("203.0.113.50", "mirai", 0.95)["action"] == "would-block"
+
+
+def t_ips_scope_and_idempotence():
+    """nft ruleset is declarative + scope-aware (vault/Findings/F06, F07)."""
+    from ips_response import Responder, NFT_TABLE, NFT_BLOCK_SET, NFT_THROTTLE_SET
+    host = Responder(mode="dry-run", scope="host", backend="nftables",
+                     state_path=os.path.join(TMP, "s_host.json"))
+    net = Responder(mode="dry-run", scope="network", backend="nftables",
+                    state_path=os.path.join(TMP, "s_net.json"))
+    h, n = host._nft_ruleset(), net._nft_ruleset()
+    assert "hook input" in h and "hook forward" not in h, "host scope leaked FORWARD"
+    assert "hook input" in n and "hook forward" in n, "network scope missing FORWARD"
+    # rate-limit tier exists in the ruleset, not just in the docs
+    assert NFT_THROTTLE_SET in n and "limit rate over" in n
+    assert NFT_BLOCK_SET in n and f"table inet {NFT_TABLE}" in n
+    # declarative: applied after a flush, so re-running cannot accumulate rules
+    assert n.count("hook forward") == 1
+    assert net.status()["protects"] == "this sensor + forwarded traffic"
 
 
 def t_c_export():
@@ -545,7 +581,8 @@ def main():
         ("traffic_gen CLI", t_traffic_gen_cli),
         ("build_corpus helper", t_build_corpus_helper),
         ("model artifacts", t_model_artifacts),
-        ("ips responder", t_ips_responder),
+        ("ips responder ladder", t_ips_responder),
+        ("ips scope + nft idempotence", t_ips_scope_and_idempotence),
         ("c export + compile", t_c_export),
         ("SFAF alignment contract", t_alignment_contract),
         ("multidataset taxonomy", t_multidataset_taxonomy),

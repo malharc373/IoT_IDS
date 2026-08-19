@@ -388,6 +388,20 @@ def main():
                     help="how long an IPS block lasts (default 300s)")
     ap.add_argument("--allow", action="append", default=[],
                     help="IP/CIDR the IPS must never block (repeatable)")
+    ap.add_argument("--ips-scope", default="host", choices=("host", "network"),
+                    dest="ips_scope",
+                    help="host = INPUT only (passive sensor, protects this box); "
+                         "network = INPUT+FORWARD (inline sensor, protects the "
+                         "devices behind it)")
+    ap.add_argument("--ips-strikes", type=int, default=3, dest="ips_strikes",
+                    help="corroborating incidents required before blocking "
+                         "(model confidence is uncalibrated; default 3)")
+    ap.add_argument("--ips-strike-window", type=int, default=120,
+                    dest="ips_strike_window",
+                    help="seconds over which strikes are counted (default 120)")
+    ap.add_argument("--ips-throttle-pps", type=int, default=20,
+                    dest="ips_throttle_pps",
+                    help="packets/s a throttled source is limited to (default 20)")
     args = ap.parse_args()
 
     det = Detector(args.model, args.meta)
@@ -399,8 +413,12 @@ def main():
         responder = Responder(mode="enforce" if args.prevent else "dry-run",
                               min_conf=args.ips_min_conf,
                               block_seconds=args.block_seconds,
-                              allowlist=args.allow)
-        print(CYA(f"[IPS] {responder.status()}"))
+                              allowlist=args.allow,
+                              scope=args.ips_scope,
+                              strikes=args.ips_strikes,
+                              strike_window=args.ips_strike_window,
+                              throttle_pps=args.ips_throttle_pps)
+        print(CYA(f"[IPS] {json.dumps(responder.status())}"))
 
     try:
         if args.pcap:

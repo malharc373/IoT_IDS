@@ -4,8 +4,14 @@ End-to-end walkthrough: flash → connect → copy → install → run → demon
 Tested target: **Raspberry Pi 4 (64-bit Raspberry Pi OS)**. A Pi 3B+/Zero 2 W
 also works (inference is ~microseconds; the sniffer is the only real load).
 
-The edge model (`models/live_ids.onnx`, ~55 KB) has the feature scaler baked
-in, so the Pi only needs `onnxruntime + numpy + scapy` — no training stack.
+The edge model (`models/live_ids.onnx`, ~96 KB) takes raw flow features — trees
+are scale-invariant, so there is no scaler to ship or drift — and the Pi needs
+only `onnxruntime + numpy + scapy`, no training stack.
+
+> **Decide your topology before you install.** A sensor on a mirror port can
+> *detect* attacks on other devices but can never *stop* them. Only an inline
+> sensor can. See [§6 Placement](#6-placement-passive-vs-inline) — it decides
+> whether `--ips-scope host` or `--ips-scope network` is the honest setting.
 
 ---
 
@@ -70,7 +76,16 @@ journalctl -u iot-ids -f                          # watch live detections
 tail -f ~/IOT-IDS/logs/alerts.jsonl
 ```
 
-The dashboard is then live at `http://<pi-ip>:8080` from any device on the LAN.
+The dashboard is live at `http://<pi-ip>:8080/?token=<token>` — `setup_pi.sh`
+mints a token on first run, stores it at `logs/dashboard.token` (mode 600) and
+prints the full URL. The page exposes attacking hosts, active blocks and the
+segment's addressing, so it refuses to serve a network without one. To skip the
+token entirely, keep it on loopback and tunnel:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 <user>@iot-ids.local     # then browse localhost:8080
+```
+
 Both services start automatically on boot.
 
 Or run it in the foreground to watch directly:
@@ -81,17 +96,31 @@ sudo .venv/bin/python src/ids_daemon.py --iface eth0
 
 ### Prevention (IPS) mode
 
-To actively block attackers (not just alert), add `--prevent`. It uses
-nftables/iptables with a confidence gate, an allowlist, and auto-expiry:
+The responder acts on a ladder — **monitor → throttle → block** — via
+nftables/iptables, with an allowlist and auto-expiry:
 
 ```bash
 sudo .venv/bin/python src/ids_daemon.py --iface eth0 --prevent \
-     --allow 192.168.1.0/24 --ips-min-conf 0.9 --block-seconds 300
+     --allow 192.168.1.0/24 --ips-min-conf 0.9 --block-seconds 300 \
+     --ips-scope host --ips-strikes 3
 ```
 
 Use `--ips` (instead of `--prevent`) for a dry-run that logs what it *would*
-block without touching the firewall. To make the systemd service enforce, add
+do without touching the firewall. To make the systemd service enforce, add
 `--prevent` to `ExecStart` in `deploy/setup_pi.sh` before installing.
+
+Two flags change what actually happens, and neither has a safe default you can
+ignore:
+
+| flag | meaning |
+|---|---|
+| `--ips-scope host` (default) | rules on **INPUT** only — protects *this Pi*. Correct for a mirror-port sensor, and honest that attacks on other devices are not stopped. |
+| `--ips-scope network` | rules on **INPUT + FORWARD** — protects devices that route *through* the Pi. Requires the inline setup in §6. |
+| `--ips-strikes 3` | corroborating incidents required inside `--ips-strike-window` before blocking. Below that the source is **rate-limited** (`--ips-throttle-pps`, default 20) rather than blackholed. |
+
+The strike gate exists because the model's confidence is **not calibrated** — a
+reported 0.99 is not a 99% guarantee. Blackholing a host on one saturated score
+is not a defensible action, so evidence has to accumulate first.
 
 ### Web dashboard
 
@@ -99,13 +128,131 @@ The sensor writes alerts to `logs/alerts.jsonl`; a stdlib dashboard renders them
 live. Run it alongside the sensor and browse from any device on the LAN:
 
 ```bash
-.venv/bin/python src/dashboard.py --port 8080     # http://<pi-ip>:8080
+.venv/bin/python src/dashboard.py --port 8080                    # loopback only
+.venv/bin/python src/dashboard.py --host 0.0.0.0 --token generate # LAN + token
 ```
 
 It shows active incidents, attack-type/category breakdown, top sources, a
-per-minute timeline, and the current IPS blocklist — auto-refreshing every 2s.
+per-minute timeline, and the current IPS blocklist and throttle list —
+auto-refreshing every 2s. There is no TLS (it is a stdlib HTTP server), so the
+token authenticates but does not encrypt; over an untrusted network use the SSH
+tunnel above.
 
-## 6. Demonstrate detection (from another host on the LAN)
+## 6. Placement: passive vs inline
+
+This is the decision that determines whether the "P" in IPS means anything.
+
+### Passive — mirror/SPAN port (default, `--ips-scope host`)
+
+```
+        ┌────────┐
+ LAN ───┤ switch ├─── IoT devices
+        └───┬────┘
+            │ mirror port
+        ┌───┴───┐
+        │  Pi   │   sees everything, forwards nothing
+        └───────┘
+```
+
+The Pi observes a copy of the traffic. It can **detect** an attack on a camera
+or a thermostat, and it can block traffic aimed at *itself* — but the attack
+packets never traverse the Pi, so no firewall rule on it can stop them. This is
+the right choice for monitoring, and `--ips-scope host` is the honest setting.
+
+On a plain unmanaged switch you will only ever see broadcast traffic and your
+own — that is the "only your own traffic seen" row in Troubleshooting.
+
+### Inline — bridge (`--ips-scope network`)
+
+```
+        ┌───────┐            ┌────────┐
+ uplink ┤ eth0  │            │        │
+        │  Pi   │── br0 ─────┤ switch ├─── IoT devices
+ (usb)  │ eth1  │            │        │
+        └───────┘            └────────┘
+```
+
+Everything the devices send crosses the Pi, so a FORWARD-chain rule can
+actually drop it. Needs a second NIC (a USB-Ethernet adapter is fine).
+
+```bash
+sudo apt install -y bridge-utils
+```
+
+Create the bridge with systemd-networkd (survives reboot):
+
+```bash
+sudo tee /etc/systemd/network/br0.netdev >/dev/null <<'EOF'
+[NetDev]
+Name=br0
+Kind=bridge
+EOF
+
+sudo tee /etc/systemd/network/br0.network >/dev/null <<'EOF'
+[Match]
+Name=br0
+[Network]
+DHCP=yes
+EOF
+
+# enslave both NICs
+for i in eth0 eth1; do
+  sudo tee /etc/systemd/network/$i.network >/dev/null <<EOF
+[Match]
+Name=$i
+[Network]
+Bridge=br0
+EOF
+done
+
+sudo systemctl enable --now systemd-networkd
+```
+
+Bridged frames must traverse the FORWARD chain for the IPS to see them:
+
+```bash
+sudo modprobe br_netfilter
+echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf
+printf 'net.bridge.bridge-nf-call-iptables=1\nnet.bridge.bridge-nf-call-ip6tables=1\n' \
+  | sudo tee /etc/sysctl.d/99-iot-ids.conf
+sudo sysctl --system
+```
+
+Then sniff the bridge and enforce at network scope:
+
+```bash
+sudo .venv/bin/python src/ids_daemon.py --iface br0 --prevent \
+     --ips-scope network --allow 192.168.1.0/24
+```
+
+> **Fail-open matters.** An inline Pi is now a single point of failure for the
+> whole segment. The nft table this project installs has `policy accept` and
+> drops only listed sources, so a *crashed* daemon leaves traffic flowing — but
+> a *powered-off* Pi breaks the link. For anything beyond a lab, use a
+> fail-open network tap or a managed switch's mirror port and stay passive.
+
+> **Test in dry-run first.** Run with `--ips --ips-scope network` for a while
+> and read `logs/alerts.jsonl`. A false positive in `host` scope costs you the
+> sensor; in `network` scope it costs a device its connectivity.
+
+To make it permanent, edit `ExecStart` in `/etc/systemd/system/iot-ids.service`
+(or `deploy/setup_pi.sh` before installing) to use `--iface br0 --prevent
+--ips-scope network`, then `sudo systemctl daemon-reload && sudo systemctl
+restart iot-ids`.
+
+### Verifying enforcement works
+
+```bash
+sudo nft list table inet iot_ids       # sets 'blocked'/'throttled' + chains
+sudo nft list set inet iot_ids blocked # currently blocked sources
+python src/ips_response.py --status    # what the responder thinks it can do
+```
+
+`status()` reports `"protects": "this sensor only"` or
+`"this sensor + forwarded traffic"` — if it says the former while you expected
+inline enforcement, the scope flag did not take effect.
+
+## 7. Demonstrate detection (from another host on the LAN)
 
 Install attacker tools on a second machine (your laptop):
 
@@ -163,4 +310,8 @@ cleanly if absent.
 | no packets seen live | check the interface name with `ip -brief addr`; run with `sudo` |
 | service not starting | `journalctl -u iot-ids -e` to see the error |
 | high CPU on Pi Zero | raise `--step` (e.g. `--step 5`) to flush less often |
-| only your own traffic seen | a switch isolates ports — mirror the port or run the Pi as the gateway/AP |
+| only your own traffic seen | a switch isolates ports — mirror the port, or go inline (§6) |
+| detections fire but nothing is blocked | you are in `--ips-scope host` on a mirror port: the attack traffic never crosses the Pi. See §6. |
+| `nft list table inet iot_ids` is empty | the responder fell back to dry-run — check `python src/ips_response.py --status` for `backend` and whether it has root |
+| dashboard refuses to start | binding off-loopback needs `--token` or `--insecure`; the error message lists the options |
+| sources throttled but never blocked | expected — `--ips-strikes` corroborating incidents are required first; lower it or widen `--ips-strike-window` |

@@ -24,8 +24,12 @@ sys.path.insert(0, os.path.join(ROOT, "attacks"))
 sys.path.insert(0, os.path.join(ROOT, "code"))
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
-PASS, FAIL = [], []
+PASS, FAIL, SKIP = [], [], []
 TMP = tempfile.mkdtemp(prefix="iotids_test_")
+
+
+class SkipTest(Exception):
+    """Raised when a check needs an artifact that is not in a fresh clone."""
 
 
 def check(name, fn):
@@ -34,6 +38,9 @@ def check(name, fn):
             fn()
         PASS.append(name)
         print(f"  \033[32mPASS\033[0m  {name}")
+    except SkipTest as e:
+        SKIP.append((name, str(e)))
+        print(f"  \033[33mSKIP\033[0m  {name}  -> {e}")
     except Exception as e:
         FAIL.append((name, repr(e)))
         print(f"  \033[31mFAIL\033[0m  {name}  -> {e!r}")
@@ -373,6 +380,9 @@ def t_ips_scope_and_idempotence():
 
 def t_c_export():
     import importlib.util, subprocess, shutil
+    if not os.path.exists(os.path.join(ROOT, "models", "live_ids_booster.json")):
+        raise SkipTest("models/live_ids_booster.json absent (gitignored) — "
+                       "run src/train_live_model.py to exercise the C export")
     spec = importlib.util.spec_from_file_location("expc", os.path.join(ROOT, "src", "export_c.py"))
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
     meta, df = m._load()
@@ -770,26 +780,24 @@ def t_sfaf_trainer_guard():
 
 
 def t_sfaf_onnx_export():
+    """The SFAF edge export must match the trained model exactly (F03, F18)."""
     import importlib.util, numpy as np
     spec = importlib.util.spec_from_file_location(
         "m02b", os.path.join(ROOT, "code", "02_train_sfaf.py"))
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-    from sklearn.preprocessing import StandardScaler
-    from sklearn.pipeline import Pipeline
     from xgboost import XGBClassifier
     import onnxruntime as rt
     rng = np.random.RandomState(0)
     X = rng.rand(1500, 12).astype(np.float32)
     y = (X[:, 5] + X[:, 2] > 1.0).astype(int)
-    sc = StandardScaler().fit(X)
+    # trained on RAW features — no scaler anywhere in the path
     edge = XGBClassifier(n_estimators=20, max_depth=4, tree_method="hist",
-                         eval_metric="logloss", random_state=42).fit(sc.transform(X), y)
+                         eval_metric="logloss", base_score=0.5,
+                         random_state=42).fit(X, y)
     path = os.path.join(TMP, "edge.onnx")
-    m.export_edge_onnx(sc, edge, path)
-    sess = rt.InferenceSession(path)
-    onx = sess.run(None, {"input": X[:300]})[0].ravel()
-    ref = Pipeline([("sc", sc), ("clf", edge)]).predict(X[:300])
-    assert (onx == ref).all()
+    m.export_edge_onnx(edge, path)
+    onx = rt.InferenceSession(path).run(None, {"input": X[:300]})[0].ravel()
+    assert (onx == edge.predict(X[:300])).all(), "SFAF ONNX export does not match"
 
 
 def t_download_datasets_runs():
@@ -826,9 +834,7 @@ def t_systemd_unit_sane():
     assert "iot-ids-dashboard.service" in setup and "enable iot-ids.service iot-ids-dashboard.service" in setup
 
 
-def main():
-    print(f"Running smoke tests (tmp={TMP})\n")
-    tests = [
+TESTS = [
         ("imports", t_imports),
         ("requirements importable", t_requirements_importable),
         ("flow_features core", t_flow_features_core),
@@ -865,12 +871,16 @@ def main():
         ("download_datasets runs", t_download_datasets_runs),
         ("shell script syntax", t_shell_syntax),
         ("benchmark params", t_benchmark_params),
-        ("systemd unit sane", t_systemd_unit_sane),
-    ]
-    for name, fn in tests:
+        ("systemd unit sane", t_systemd_unit_sane),]
+
+
+def main():
+    print(f"Running smoke tests (tmp={TMP})\n")
+    for name, fn in TESTS:
         check(name, fn)
     shutil.rmtree(TMP, ignore_errors=True)
-    print(f"\n{'='*50}\n  {len(PASS)} passed, {len(FAIL)} failed\n{'='*50}")
+    tail = f", {len(SKIP)} skipped" if SKIP else ""
+    print(f"\n{'='*50}\n  {len(PASS)} passed, {len(FAIL)} failed{tail}\n{'='*50}")
     if FAIL:
         for n, e in FAIL:
             print(f"  FAILED: {n}: {e}")

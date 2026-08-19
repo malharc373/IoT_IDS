@@ -34,7 +34,7 @@
     "bot_iot": 394642,
     "cic_iot_2023": 400000
   },
-  "scaler": "single StandardScaler fit on pooled raw training rows",
+  "scaler": null,
   "baseline_cicids_only": {
     "cicids2017": {
       "acc": 0.9823,
@@ -43,41 +43,41 @@
       "f1_lift": 0.6265,
       "auc": 0.9984,
       "mcc": 0.9451,
-      "bal_acc": 0.979
+      "bal_acc": 0.9789
     },
     "unsw_nb15": {
-      "acc": 0.3524,
-      "f1": 0.0008,
+      "acc": 0.3506,
+      "f1": 0.0009,
       "f1_trivial": 0.7863,
-      "f1_lift": -0.7855,
-      "auc": 0.2191,
-      "mcc": 0.0118,
-      "bal_acc": 0.5002
+      "f1_lift": -0.7854,
+      "auc": 0.4581,
+      "mcc": -0.0481,
+      "bal_acc": 0.4977
     },
     "ton_iot": {
-      "acc": 0.2921,
-      "f1": 0.1133,
+      "acc": 0.3323,
+      "f1": 0.2133,
       "f1_trivial": 0.8591,
-      "f1_lift": -0.7458,
-      "auc": 0.7383,
-      "mcc": 0.124,
-      "bal_acc": 0.5299
+      "f1_lift": -0.6458,
+      "auc": 0.7478,
+      "mcc": 0.1453,
+      "bal_acc": 0.5496
     },
     "bot_iot": {
-      "acc": 0.2781,
-      "f1": 0.4351,
+      "acc": 0.0211,
+      "f1": 0.0411,
       "f1_trivial": 0.9999,
-      "f1_lift": -0.5648,
-      "auc": 0.6465,
-      "mcc": 0.004,
-      "bal_acc": 0.5835
+      "f1_lift": -0.9588,
+      "auc": 0.5465,
+      "mcc": -0.0067,
+      "bal_acc": 0.4549
     },
     "cic_iot_2023": {
       "acc": 0.1658,
       "f1": 0.0,
       "f1_trivial": 0.9096,
       "f1_lift": -0.9096,
-      "auc": 0.5892,
+      "auc": 0.5793,
       "mcc": 0.0,
       "bal_acc": 0.5
     }
@@ -85,51 +85,51 @@
   "unified": {
     "cicids2017": {
       "acc": 0.982,
-      "f1": 0.9552,
+      "f1": 0.9551,
       "f1_trivial": 0.3294,
-      "f1_lift": 0.6258,
+      "f1_lift": 0.6257,
       "auc": 0.9982,
-      "mcc": 0.9442,
-      "bal_acc": 0.978
+      "mcc": 0.944,
+      "bal_acc": 0.9781
     },
     "unsw_nb15": {
       "acc": 0.924,
-      "f1": 0.9419,
+      "f1": 0.9417,
       "f1_trivial": 0.7863,
-      "f1_lift": 0.1556,
-      "auc": 0.983,
-      "mcc": 0.8324,
-      "bal_acc": 0.9129
+      "f1_lift": 0.1554,
+      "auc": 0.9833,
+      "mcc": 0.8326,
+      "bal_acc": 0.914
     },
     "ton_iot": {
-      "acc": 0.9936,
-      "f1": 0.9957,
+      "acc": 0.9939,
+      "f1": 0.996,
       "f1_trivial": 0.8591,
-      "f1_lift": 0.1366,
-      "auc": 0.9996,
-      "mcc": 0.9827,
-      "bal_acc": 0.989
+      "f1_lift": 0.1368,
+      "auc": 0.9995,
+      "mcc": 0.9836,
+      "bal_acc": 0.9898
     },
     "bot_iot": {
-      "acc": 0.9999,
+      "acc": 1.0,
       "f1": 1.0,
       "f1_trivial": 0.9999,
-      "f1_lift": 0.0,
+      "f1_lift": 0.0001,
       "auc": 1.0,
-      "mcc": 0.5773,
-      "bal_acc": 0.6667
+      "mcc": 0.9428,
+      "bal_acc": 0.9444
     },
     "cic_iot_2023": {
-      "acc": 0.8957,
-      "f1": 0.9369,
+      "acc": 0.8954,
+      "f1": 0.9368,
       "f1_trivial": 0.9096,
-      "f1_lift": 0.0273,
+      "f1_lift": 0.0272,
       "auc": 0.9532,
-      "mcc": 0.637,
-      "bal_acc": 0.8295
+      "mcc": 0.6351,
+      "bal_acc": 0.8279
     }
   },
-  "onnx_kb": 19.1,
+  "onnx_kb": 19.3,
   "onnx_parity": 1.0,
   "caveat": "in-domain splits are random row splits and are optimistic for CICFlowMeter corpora; see cross_dataset_eval.py for the honest transfer number"
 }

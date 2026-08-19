@@ -3,31 +3,33 @@
 02_train_sfaf.py — headless reproduction of the SFAF unified pipeline.
 
 This is a runnable, non-notebook version of 02_SFAF_Unified_Model.ipynb. It
-regenerates the two deployment artifacts that were gitignored out of the repo:
+regenerates the deployment artifact that was gitignored out of the repo:
 
-    models/scaler_unified.pkl            (12-feature StandardScaler)
-    models/xgb_edge.onnx                 (edge model, scaler baked in)
+    models/xgb_edge.onnx                 (edge model, raw 12 features)
 
-…plus the comparison tables and the thesis metrics.
+…plus models/xgb_unified.json, models/edge_meta.json and the thesis metrics.
 
 
-ONE SCALER, FIT ONCE  (see vault/Findings/F03)
-----------------------------------------------
-The pre-2026-08 version of this script fit a **separate** StandardScaler per
-dataset, stacked the resulting per-dataset-scaled blocks, trained the edge model
-on that stack, and then baked a **different**, pooled scaler into the exported
-ONNX. Every prediction the exported model made was therefore on input normalised
-by a scaler the model had never been trained against.
+NO SCALER  (see vault/Findings/F03 and F18)
+-------------------------------------------
+The pre-2026-08 version fit a **separate** StandardScaler per dataset, stacked
+the per-dataset-scaled blocks, trained the edge model on that stack, and then
+baked a **different**, pooled scaler into the exported ONNX. Every prediction
+the exported model made was therefore on input normalised by a scaler the model
+had never been trained against (F03).
 
 Per-dataset scaling is also an oracle that does not exist at deployment time: it
 hands the model perfect per-domain normalisation, which is precisely the
-information a cross-domain model is supposed to have to do without. It inflates
+information a cross-domain model is supposed to have to do without, inflating
 any "the unified model closes the gap" claim.
 
-So: exactly one scaler, fit on the pooled **raw** training rows, used for
-training, for evaluation and for the export. A single-dataset baseline gets its
-own single-dataset scaler, because that is what a single-dataset practitioner
-would actually have.
+The scaler is now gone entirely rather than merely unified. A gradient-boosted
+tree splits on `x < threshold`, so it is invariant to any strictly monotone
+per-feature transform — standardising the inputs cannot change a single split
+decision. Removing it also removes the `convert_sklearn` Pipeline export path,
+which was observed to silently emit an 83%-accurate stand-in for a 99.98% model
+in the live pipeline (F18). This script's export is verified against the trained
+model on every run and aborts rather than shipping a mismatch.
 
 
 Datasets are loaded through code/multidataset.py, which is the single source of
@@ -49,7 +51,6 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     accuracy_score, f1_score, roc_auc_score, matthews_corrcoef,
@@ -120,16 +121,21 @@ def _X(df):
     return df[UNIFIED_FEATURES].values.astype(np.float32)
 
 
-def fit_model(scaler, train_df, n_estimators=100, max_depth=6):
+def fit_model(train_df, n_estimators=100, max_depth=6):
+    """Train on RAW features — trees are scale-invariant, see the module docstring.
+
+    base_score is pinned to a scalar: XGBoost >= 2.0 otherwise fits a per-class
+    vector, which the ONNX converter mishandles (F18).
+    """
     clf = XGBClassifier(n_estimators=n_estimators, max_depth=max_depth,
                         tree_method="hist", eval_metric="logloss",
-                        random_state=RS, n_jobs=-1)
-    clf.fit(scaler.transform(_X(train_df)), train_df.y.values)
+                        base_score=0.5, random_state=RS, n_jobs=-1)
+    clf.fit(_X(train_df), train_df.y.values)
     return clf
 
 
-def evaluate(scaler, clf, test_df):
-    X = scaler.transform(_X(test_df))
+def evaluate(clf, test_df):
+    X = _X(test_df)
     y = test_df.y.values
     p = clf.predict(X)
     both = len(np.unique(y)) > 1
@@ -152,32 +158,19 @@ def _row(name, m):
             f"(trivial {m['f1_trivial']:.3f}, lift {m['f1_lift']:+.3f})")
 
 
-def export_edge_onnx(scaler, edge, path, n_features=None):
-    """Pipeline(scaler, edge XGB) -> ONNX with scaling baked in.
+def export_edge_onnx(edge, path, n_features=None):
+    """Convert the XGBoost classifier straight to ONNX.
 
-    `scaler` MUST be the same object the model was trained through.
+    Deliberately NOT convert_sklearn on a Pipeline — that path silently produced
+    an 83%-accurate stand-in for a 99.98% model in the live pipeline (F18).
     """
-    from sklearn.pipeline import Pipeline
-    from skl2onnx import convert_sklearn, update_registered_converter
-    from skl2onnx.common.data_types import FloatTensorType
-    from skl2onnx.common.shape_calculator import (
-        calculate_linear_classifier_output_shapes,
-    )
-    from onnxmltools.convert.xgboost.operator_converters.XGBoost import (
-        convert_xgboost,
-    )
-    update_registered_converter(
-        XGBClassifier, "XGBoostXGBClassifier",
-        calculate_linear_classifier_output_shapes, convert_xgboost,
-        options={"nocl": [True, False], "zipmap": [True, False, "columns"]},
-    )
+    import onnxmltools
+    from onnxmltools.convert.common.data_types import FloatTensorType
+
     nf = n_features or len(UNIFIED_FEATURES)
-    pipe = Pipeline([("sc", scaler), ("clf", edge)])
-    onx = convert_sklearn(
-        pipe, "xgb_edge",
-        initial_types=[("input", FloatTensorType([None, nf]))],
-        target_opset={"": 15, "ai.onnx.ml": 3},
-        options={id(edge): {"zipmap": False}},
+    onx = onnxmltools.convert_xgboost(
+        edge, initial_types=[("input", FloatTensorType([None, nf]))],
+        target_opset=15,
     )
     with open(path, "wb") as f:
         f.write(onx.SerializeToString())
@@ -190,36 +183,30 @@ def main():
     frames = load_datasets()
     train, test = split(frames)
 
-    # ── The one scaler. Fit on pooled RAW training rows, nothing else. ────────
     pooled_train = pd.concat(list(train.values()), ignore_index=True)
-    scaler = StandardScaler().fit(_X(pooled_train))
-    print(f"\n[Scaler] one StandardScaler fit on {len(pooled_train):,} pooled raw "
-          f"training rows — used for training, evaluation and export")
+    print(f"\n[Features] raw, unscaled — trees are scale-invariant (see F18); "
+          f"{len(pooled_train):,} pooled training rows")
 
     # ── Stage 3: single-dataset baseline (CICIDS-only) ───────────────────────
-    # Gets its own scaler: that is what a CICIDS-only practitioner would have.
-    cic_scaler = StandardScaler().fit(_X(train["cicids2017"]))
-    baseline = fit_model(cic_scaler, train["cicids2017"])
+    baseline = fit_model(train["cicids2017"])
     print("\n[Baseline] trained on CICIDS2017 only")
     base_results = {}
     for name in test:
-        m = evaluate(cic_scaler, baseline, test[name])
+        m = evaluate(baseline, test[name])
         base_results[name] = m
         tag = "in-domain " if name == "cicids2017" else "transfer  "
         print(f"  {tag}" + _row(name, m).strip())
 
     # ── Stage 4: unified SFAF model ──────────────────────────────────────────
     t0 = time.time()
-    unified = fit_model(scaler, pooled_train)
+    unified = fit_model(pooled_train)
     print(f"\n[Unified] trained on {len(pooled_train):,} pooled rows "
           f"in {time.time()-t0:.1f}s")
     unified.save_model(os.path.join(MODELS, "xgb_unified.json"))
-    import joblib
-    joblib.dump(unified, os.path.join(MODELS, "xgb_unified.pkl"))
 
     uni_results = {}
     for name in test:
-        m = evaluate(scaler, unified, test[name])
+        m = evaluate(unified, test[name])
         uni_results[name] = m
         print(_row(name, m))
 
@@ -230,22 +217,18 @@ def main():
         b, u = base_results[name]["auc"], uni_results[name]["auc"]
         print(f"  {name:<16}{b:>14.4f}{u:>14.4f}{u-b:>+9.4f}")
 
-    joblib.dump(scaler, os.path.join(MODELS, "scaler_unified.pkl"))
-    print("\n[Artifact] models/scaler_unified.pkl written")
-
-    # ── Stage 5: edge model + ONNX (SAME scaler baked in) ────────────────────
-    edge = fit_model(scaler, pooled_train, n_estimators=20, max_depth=4)
-    joblib.dump(edge, os.path.join(MODELS, "xgb_edge.pkl"))
+    # ── Stage 5: edge model + ONNX ───────────────────────────────────────────
+    edge = fit_model(pooled_train, n_estimators=20, max_depth=4)
     onnx_path = os.path.join(MODELS, "xgb_edge.onnx")
-    size = export_edge_onnx(scaler, edge, onnx_path)
+    size = export_edge_onnx(edge, onnx_path)
     print(f"[Artifact] models/xgb_edge.onnx written ({size/1024:.1f} KB)")
 
-    # ── Verify the export: ONNX(raw) must equal edge(scaler.transform(raw)) ───
+    # ── Verify the export: ONNX(raw) must equal edge(raw), or refuse to ship ──
     import onnxruntime as rt
     probe = _X(pd.concat(list(test.values()), ignore_index=True)
                .sample(min(5000, sum(len(t) for t in test.values())),
                        random_state=RS))
-    ref = edge.predict(scaler.transform(probe))
+    ref = edge.predict(probe)
     got = rt.InferenceSession(onnx_path).run(None, {"input": probe})[0].ravel()
     agree = float((got == ref).mean())
     print(f"[Verify]  ONNX vs sklearn pipeline on {len(probe):,} rows: "
@@ -257,7 +240,7 @@ def main():
         "unified_features": UNIFIED_FEATURES,
         "feature_units": md.FEATURE_UNITS,
         "datasets": {n: int(len(frames[n])) for n in frames},
-        "scaler": "single StandardScaler fit on pooled raw training rows",
+        "scaler": None,   # trees are scale-invariant; see F18
         "baseline_cicids_only": {n: {k: round(float(v), 4) for k, v in m.items()}
                                  for n, m in base_results.items()},
         "unified": {n: {k: round(float(v), 4) for k, v in m.items()}

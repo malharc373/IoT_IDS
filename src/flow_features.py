@@ -16,8 +16,8 @@ The 22 features are chosen to make different attack classes separable:
   * host-context rolling stats (distinct dst ports / IPs per source) catch
     reconnaissance (port scans) that is invisible at the single-flow level.
 
-No third-party dependency is required for parsing (pure struct), so this file
-runs unchanged on a Raspberry Pi.
+Both IPv4 and IPv6 are parsed. No third-party dependency is required for
+parsing (pure struct), so this file runs unchanged on a Raspberry Pi.
 """
 from __future__ import annotations
 
@@ -32,6 +32,15 @@ from typing import Dict, Iterable, List, Optional
 PROTO_ICMP = 1
 PROTO_TCP = 6
 PROTO_UDP = 17
+PROTO_ICMPV6 = 58
+
+ETH_IPV4 = 0x0800
+ETH_IPV6 = 0x86DD
+ETH_VLAN = 0x8100
+ETH_QINQ = 0x88A8
+
+# IPv6 extension headers to walk past to reach the transport header
+_V6_EXT = {0, 43, 44, 51, 60, 135}   # hop-by-hop, routing, fragment, AH, dstopts, mobility
 
 # TCP flag bit masks
 FIN = 0x01
@@ -73,30 +82,62 @@ N_FEATURES = len(FEATURE_NAMES)
 
 
 # ── Packet parsing ────────────────────────────────────────────────────────────
-def parse_raw(raw: bytes) -> Optional[dict]:
-    """Ethernet → IPv4 → TCP/UDP/ICMP. Returns a normalized dict or None."""
+def parse_raw(raw: bytes, orig_len: Optional[int] = None) -> Optional[dict]:
+    """Ethernet → IPv4/IPv6 → TCP/UDP/ICMP. Returns a normalized dict or None.
+
+    `orig_len` is the on-the-wire frame length. Pass it when reading a capture
+    taken with a snaplen: the stored bytes are truncated, so `len(raw)` would
+    understate every packet-length and byte-rate feature (vault/Findings/F16).
+    """
     if len(raw) < 14:
         return None
     eth_type = struct.unpack("!H", raw[12:14])[0]
-    # Handle a single 802.1Q VLAN tag transparently.
+    # Walk up to two stacked VLAN tags (802.1Q / 802.1ad QinQ) transparently.
     offset = 14
-    if eth_type == 0x8100:
-        if len(raw) < 18:
+    for _ in range(2):
+        if eth_type not in (ETH_VLAN, ETH_QINQ):
+            break
+        if len(raw) < offset + 4:
             return None
-        eth_type = struct.unpack("!H", raw[16:18])[0]
-        offset = 18
-    if eth_type != 0x0800:  # IPv4 only
-        return None
+        eth_type = struct.unpack("!H", raw[offset + 2:offset + 4])[0]
+        offset += 4
+
     ip = raw[offset:]
-    if len(ip) < 20:
+    length = orig_len if orig_len else len(raw)
+
+    if eth_type == ETH_IPV4:
+        if len(ip) < 20:
+            return None
+        ihl = (ip[0] & 0x0F) * 4
+        if ihl < 20 or len(ip) < ihl:
+            return None
+        proto = ip[9]
+        src_ip = socket.inet_ntoa(ip[12:16])
+        dst_ip = socket.inet_ntoa(ip[16:20])
+        payload = ip[ihl:]
+    elif eth_type == ETH_IPV6:
+        if len(ip) < 40:
+            return None
+        proto = ip[6]
+        try:
+            src_ip = socket.inet_ntop(socket.AF_INET6, ip[8:24])
+            dst_ip = socket.inet_ntop(socket.AF_INET6, ip[24:40])
+        except (OSError, ValueError):
+            return None
+        payload = ip[40:]
+        # skip extension headers to reach the transport header
+        for _ in range(8):
+            if proto not in _V6_EXT or len(payload) < 8:
+                break
+            if proto == 44:                      # fragment header: fixed 8 bytes
+                nxt, hlen = payload[0], 8
+            else:
+                nxt, hlen = payload[0], (payload[1] + 1) * 8
+            if len(payload) < hlen:
+                return None
+            proto, payload = nxt, payload[hlen:]
+    else:
         return None
-    ihl = (ip[0] & 0x0F) * 4
-    if ihl < 20 or len(ip) < ihl:
-        return None
-    proto = ip[9]
-    src_ip = socket.inet_ntoa(ip[12:16])
-    dst_ip = socket.inet_ntoa(ip[16:20])
-    payload = ip[ihl:]
 
     src_port = dst_port = 0
     flags = 0
@@ -105,8 +146,11 @@ def parse_raw(raw: bytes) -> Optional[dict]:
         flags = payload[13] & 0x3F
     elif proto == PROTO_UDP and len(payload) >= 8:
         src_port, dst_port = struct.unpack("!HH", payload[0:4])
-    elif proto == PROTO_ICMP:
+    elif proto in (PROTO_ICMP, PROTO_ICMPV6):
         src_port = dst_port = 0
+        # normalise ICMPv6 onto the ICMP feature value so the model sees one
+        # protocol identity for "control message" regardless of IP version
+        proto = PROTO_ICMP
 
     return {
         "src_ip": src_ip,
@@ -114,7 +158,7 @@ def parse_raw(raw: bytes) -> Optional[dict]:
         "src_port": src_port,
         "dst_port": dst_port,
         "proto": proto,
-        "length": len(raw),
+        "length": length,
         "flags": flags,
     }
 
@@ -126,12 +170,17 @@ def normalize_scapy(pkt) -> Optional[dict]:
     """
     try:
         from scapy.layers.inet import IP, TCP, UDP, ICMP
+        from scapy.layers.inet6 import IPv6, ICMPv6EchoRequest  # noqa: F401
     except Exception:
         return None
-    if IP not in pkt:
+    if IP in pkt:
+        ip = pkt[IP]
+        proto = ip.proto
+    elif IPv6 in pkt:
+        ip = pkt[IPv6]
+        proto = ip.nh
+    else:
         return None
-    ip = pkt[IP]
-    proto = ip.proto
     src_port = dst_port = 0
     flags = 0
     if TCP in pkt:
@@ -143,7 +192,7 @@ def normalize_scapy(pkt) -> Optional[dict]:
         u = pkt[UDP]
         src_port, dst_port = int(u.sport), int(u.dport)
         proto = PROTO_UDP
-    elif ICMP in pkt:
+    elif ICMP in pkt or proto == PROTO_ICMPV6:
         proto = PROTO_ICMP
     return {
         "src_ip": ip.src,
@@ -158,7 +207,7 @@ def normalize_scapy(pkt) -> Optional[dict]:
 
 # ── pcap reader (classic little/big-endian .pcap; no pcapng) ──────────────────
 def read_pcap(filename: str) -> List[tuple]:
-    """Yield (ts, raw_bytes) list from a classic .pcap file (struct-only)."""
+    """Return a list of (ts, raw_bytes, orig_len) from a classic .pcap file."""
     out = []
     with open(filename, "rb") as f:
         hdr = f.read(24)
@@ -174,7 +223,10 @@ def read_pcap(filename: str) -> List[tuple]:
             raw = f.read(incl_len)
             if len(raw) < incl_len:
                 break
-            out.append((ts_sec + ts_usec / 1e6, raw))
+            # orig_len is the on-the-wire length; incl_len is what the snaplen
+            # let through. Callers need the former or every length-derived
+            # feature shrinks silently on a snaplen'd capture (F16).
+            out.append((ts_sec + ts_usec / 1e6, raw, orig_len))
     return out
 
 
@@ -186,7 +238,7 @@ class Flow:
         "fwd_pkts", "bwd_pkts", "fwd_bytes", "bwd_bytes",
         "lengths", "iats",
         "syn", "fin", "rst", "ack",
-        "dirty", "ctx_sig",
+        "dirty", "ctx_sig", "fin_fwd", "fin_bwd", "closed",
     )
 
     def __init__(self, pkt, ts):
@@ -214,6 +266,12 @@ class Flow:
         # PEERS change even if the flow itself gained no packets — the cache
         # must invalidate on that too, or a scan's verdicts go stale.
         self.ctx_sig = None
+        # TCP teardown tracking: a flow is closed by RST, or by FIN in both
+        # directions. A later packet on the same 5-tuple then starts a NEW
+        # flow instead of being merged into the finished one (F16).
+        self.fin_fwd = False
+        self.fin_bwd = False
+        self.closed = False
 
     def update(self, pkt, ts, forward: bool):
         self.dirty = True
@@ -235,8 +293,16 @@ class Flow:
             self.fin += 1
         if fl & RST:
             self.rst += 1
+            self.closed = True
         if fl & ACK:
             self.ack += 1
+        if fl & FIN:
+            if forward:
+                self.fin_fwd = True
+            else:
+                self.fin_bwd = True
+            if self.fin_fwd and self.fin_bwd:
+                self.closed = True
 
     @property
     def tot_pkts(self) -> int:
@@ -311,17 +377,28 @@ class FlowTable:
     """
 
     def __init__(self):
+        # every flow ever seen, keyed by (5-tuple, generation) so a 5-tuple
+        # reused after a teardown yields a second, distinct record
         self.flows: Dict[tuple, Flow] = collections.OrderedDict()
+        self.active: Dict[tuple, tuple] = {}      # 5-tuple -> current flows key
+        self._gen: Dict[tuple, int] = collections.defaultdict(int)
         self.lock = threading.RLock()
 
     def add_packet(self, pkt: dict, ts: float):
         with self.lock:
             key, forward = _flow_key(pkt)
-            f = self.flows.get(key)
-            if f is None:
+            uk = self.active.get(key)
+            f = self.flows.get(uk) if uk is not None else None
+            if f is None or f.closed:
+                gen = self._gen[key]
+                self._gen[key] = gen + 1
+                uk = (key, gen)
                 f = Flow(pkt, ts)
-                self.flows[key] = f
+                self.flows[uk] = f
+                self.active[key] = uk
             f.update(pkt, ts, forward)
+            if f.closed:
+                self.active.pop(key, None)
 
     def __len__(self):
         with self.lock:
@@ -422,6 +499,10 @@ class FlowTable:
             dead = [k for k, f in self.flows.items() if (now - f.last_ts) > older_than]
             for k in dead:
                 del self.flows[k]
+            live = set(self.flows)
+            for base, uk in list(self.active.items()):
+                if uk not in live:
+                    del self.active[base]
             return dead
 
 
@@ -429,8 +510,8 @@ class FlowTable:
 def features_from_pcap(pcap_path: str, min_pkts: int = 1):
     """Parse a .pcap and return (meta, vector) list. Batch/host-context = all."""
     table = FlowTable()
-    for ts, raw in read_pcap(pcap_path):
-        pkt = parse_raw(raw)
+    for ts, raw, orig_len in read_pcap(pcap_path):
+        pkt = parse_raw(raw, orig_len)
         if pkt is not None:
             table.add_packet(pkt, ts)
     return table.extract(min_pkts=min_pkts, window=None)

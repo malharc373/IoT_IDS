@@ -243,8 +243,8 @@ def run_offline(pcap_path, det, alog, csv_out=None):
     print(CYA(f"\n[*] Offline analysis: {pcap_path}"))
     table = FlowTable()
     n_pkts = 0
-    for ts, raw in read_pcap(pcap_path):
-        pk = parse_raw(raw)
+    for ts, raw, orig_len in read_pcap(pcap_path):
+        pk = parse_raw(raw, orig_len)
         if pk is not None:
             table.add_packet(pk, ts); n_pkts += 1
     flows = table.extract(min_pkts=1, window=None)
@@ -305,8 +305,8 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
         if responder is not None:
             responder.expire()
 
-    for ts, raw in packets:
-        pk = parse_raw(raw)
+    for ts, raw, orig_len in packets:
+        pk = parse_raw(raw, orig_len)
         if pk is not None:
             table.add_packet(pk, ts); n_pkts += 1
         if ts >= next_ckpt:

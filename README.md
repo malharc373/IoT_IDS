@@ -236,7 +236,9 @@ code/
   transfer_experiment.py deployable feature transforms to close the transfer gap
   02_train_sfaf.py     headless SFAF reproduction (regenerates thesis artifacts)
   download_datasets.py dataset fetch (Kaggle + auth-free direct URLs)
-  *.ipynb              EDA / SFAF / edge-deployment notebooks
+  *.ipynb              EDA / SFAF / edge-deployment notebooks (historical
+                       record of the thesis work; the .py scripts above are the
+                       runnable, maintained versions)
 models/
   live_ids.onnx        deployable edge model (~96 KB, raw features — trees are
                        scale-invariant, so there is no scaler to drift)
@@ -251,7 +253,8 @@ tests/
 
 ## How detection works
 
-Each bidirectional flow is summarised by **22 features** (`src/flow_features.py`):
+Each bidirectional flow is summarised by **22 features** (`src/flow_features.py`,
+IPv4 and IPv6, VLAN/QinQ-aware, TCP teardown-aware):
 protocol, duration, packet/byte counts and rates, packet-size and inter-arrival
 statistics, TCP flag ratios, forward/backward asymmetry, the target **service
 port**, plus **host-context** features (distinct destination ports and IPs per

@@ -54,11 +54,13 @@ models/live_ids_booster.json
 
 # ── Exceptions: tiny, deploy-critical artifacts that MUST be committed ─────────
 # (KB-scale; required to run the IDS on the edge device — keep these tracked.)
+# No .pkl is listed here on purpose: a pickle executes arbitrary code on load,
+# which is not something to ship from a security project. Everything deployable
+# is ONNX or a C header; pickles are regenerable training by-products.
 !models/live_ids.onnx
 !models/live_ids.h
 !models/live_meta.json
 !models/xgb_edge.onnx
-!models/scaler_unified.pkl
 !models/edge_meta.json
 
 # ── Secrets generated at runtime (never commit) ───────────────────────────────

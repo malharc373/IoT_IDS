@@ -63,6 +63,8 @@ import datetime as dt
 NFT_TABLE = "iot_ids"
 NFT_BLOCK_SET = "blocked"
 NFT_THROTTLE_SET = "throttled"
+NFT_BLOCK_SET6 = "blocked6"
+NFT_THROTTLE_SET6 = "throttled6"
 IPT_CHAIN = "IOT_IDS"
 
 SCOPES = ("host", "network")
@@ -275,6 +277,26 @@ class Responder:
             self._save_state()
         return gone
 
+    # ── address family ────────────────────────────────────────────────────────
+    @staticmethod
+    def _is_v6(ip):
+        try:
+            return ipaddress.ip_address(ip).version == 6
+        except ValueError:
+            return False
+
+    def _sets_for(self, ip):
+        """(block_set, throttle_set, iptables_binary) for this address family.
+
+        The flow extractor parses IPv6, so the responder has to be able to act
+        on an IPv6 source. The pre-2026-08 version had an ipv4_addr-only nft set
+        and an iptables-only path, so an IPv6 attacker was detected and then
+        silently not blocked (vault/Findings/F16).
+        """
+        if self._is_v6(ip):
+            return NFT_BLOCK_SET6, NFT_THROTTLE_SET6, "ip6tables"
+        return NFT_BLOCK_SET, NFT_THROTTLE_SET, "iptables"
+
     # ── firewall backends ─────────────────────────────────────────────────────
     def _run(self, args, stdin=None):
         try:
@@ -298,11 +320,15 @@ class Responder:
             chains.append(f"""  chain {hook} {{
     type filter hook {hook} priority -1; policy accept;
     ip saddr @{NFT_THROTTLE_SET} limit rate over {self.throttle_pps}/second drop
+    ip6 saddr @{NFT_THROTTLE_SET6} limit rate over {self.throttle_pps}/second drop
     ip saddr @{NFT_BLOCK_SET} drop
+    ip6 saddr @{NFT_BLOCK_SET6} drop
   }}""")
         return (f"table inet {NFT_TABLE} {{\n"
                 f"  set {NFT_BLOCK_SET} {{ type ipv4_addr; flags timeout; }}\n"
                 f"  set {NFT_THROTTLE_SET} {{ type ipv4_addr; flags timeout; }}\n"
+                f"  set {NFT_BLOCK_SET6} {{ type ipv6_addr; flags timeout; }}\n"
+                f"  set {NFT_THROTTLE_SET6} {{ type ipv6_addr; flags timeout; }}\n"
                 + "\n".join(chains) + "\n}\n")
 
     def _ensure_backend(self):
@@ -312,15 +338,18 @@ class Responder:
             self._run(["nft", "flush", "table", "inet", NFT_TABLE])
             self._run(["nft", "-f", "-"], stdin=self._nft_ruleset())
         elif self.backend == "iptables":
-            # dedicated chain, flushed on start; jumps added only if absent
-            self._run(["iptables", "-N", IPT_CHAIN])       # fails if exists: fine
-            self._run(["iptables", "-F", IPT_CHAIN])
-            for chain in _SCOPE_CHAINS[self.scope]:
-                exists = subprocess.run(
-                    ["iptables", "-C", chain, "-j", IPT_CHAIN],
-                    capture_output=True).returncode == 0
-                if not exists:
-                    self._run(["iptables", "-I", chain, "-j", IPT_CHAIN])
+            # dedicated chain per family, flushed on start; jumps added if absent
+            for ipt in ("iptables", "ip6tables"):
+                if not shutil.which(ipt):
+                    continue
+                self._run([ipt, "-N", IPT_CHAIN])         # fails if exists: fine
+                self._run([ipt, "-F", IPT_CHAIN])
+                for chain in _SCOPE_CHAINS[self.scope]:
+                    exists = subprocess.run(
+                        [ipt, "-C", chain, "-j", IPT_CHAIN],
+                        capture_output=True).returncode == 0
+                    if not exists:
+                        self._run([ipt, "-I", chain, "-j", IPT_CHAIN])
 
     def _restore_active(self):
         """Re-apply persisted blocks/throttles after the idempotent flush."""
@@ -334,18 +363,20 @@ class Responder:
 
     def _apply_block(self, ip, seconds=None):
         secs = seconds or self.block_seconds
+        bset, _, ipt = self._sets_for(ip)
         if self.backend == "nftables":
-            self._run(["nft", "add", "element", "inet", NFT_TABLE, NFT_BLOCK_SET,
+            self._run(["nft", "add", "element", "inet", NFT_TABLE, bset,
                        "{ %s timeout %ds }" % (ip, secs)])
         elif self.backend == "iptables":
-            self._run(["iptables", "-A", IPT_CHAIN, "-s", ip, "-j", "DROP"])
+            self._run([ipt, "-A", IPT_CHAIN, "-s", ip, "-j", "DROP"])
 
     def _remove_block(self, ip):
+        bset, _, ipt = self._sets_for(ip)
         if self.backend == "nftables":
             self._run(["nft", "delete", "element", "inet", NFT_TABLE,
-                       NFT_BLOCK_SET, "{ %s }" % ip])
+                       bset, "{ %s }" % ip])
         elif self.backend == "iptables":
-            self._run(["iptables", "-D", IPT_CHAIN, "-s", ip, "-j", "DROP"])
+            self._run([ipt, "-D", IPT_CHAIN, "-s", ip, "-j", "DROP"])
 
     def _apply_throttle(self, ip, seconds=None):
         """Rate-limit rather than blackhole — the graduated response tier.
@@ -354,25 +385,27 @@ class Responder:
         implemented; only DROP existed (vault/Findings/F08).
         """
         secs = seconds or self.block_seconds
+        _, tset, ipt = self._sets_for(ip)
         if self.backend == "nftables":
             self._run(["nft", "add", "element", "inet", NFT_TABLE,
-                       NFT_THROTTLE_SET, "{ %s timeout %ds }" % (ip, secs)])
+                       tset, "{ %s timeout %ds }" % (ip, secs)])
         elif self.backend == "iptables":
             # accept up to the limit, drop the excess from this source
-            self._run(["iptables", "-A", IPT_CHAIN, "-s", ip, "-m", "limit",
+            self._run([ipt, "-A", IPT_CHAIN, "-s", ip, "-m", "limit",
                        "--limit", f"{self.throttle_pps}/second",
                        "--limit-burst", str(self.throttle_pps), "-j", "RETURN"])
-            self._run(["iptables", "-A", IPT_CHAIN, "-s", ip, "-j", "DROP"])
+            self._run([ipt, "-A", IPT_CHAIN, "-s", ip, "-j", "DROP"])
 
     def _remove_throttle(self, ip):
+        _, tset, ipt = self._sets_for(ip)
         if self.backend == "nftables":
             self._run(["nft", "delete", "element", "inet", NFT_TABLE,
-                       NFT_THROTTLE_SET, "{ %s }" % ip])
+                       tset, "{ %s }" % ip])
         elif self.backend == "iptables":
-            self._run(["iptables", "-D", IPT_CHAIN, "-s", ip, "-m", "limit",
+            self._run([ipt, "-D", IPT_CHAIN, "-s", ip, "-m", "limit",
                        "--limit", f"{self.throttle_pps}/second",
                        "--limit-burst", str(self.throttle_pps), "-j", "RETURN"])
-            self._run(["iptables", "-D", IPT_CHAIN, "-s", ip, "-j", "DROP"])
+            self._run([ipt, "-D", IPT_CHAIN, "-s", ip, "-j", "DROP"])
 
     def status(self):
         return {"mode": "enforce" if self.effective_enforce else "dry-run",

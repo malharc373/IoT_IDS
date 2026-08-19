@@ -172,7 +172,7 @@ def bench_extract():
     t0 = time.perf_counter()
     table = FlowTable(); npk = 0
     for ts, raw in recs:
-        pk = parse_raw(raw)
+        pk = parse_raw(raw, orig_len)
         if pk: table.add_packet(pk, ts); npk += 1
     flows = table.extract(min_pkts=1)
     t_proc = time.perf_counter() - t0
@@ -194,8 +194,8 @@ def bench_e2e():
     pcap = os.path.join(ROOT, "data", "pcaps", "demo_mixed.pcap")
     t0 = time.perf_counter()
     table = FlowTable()
-    for ts, raw in read_pcap(pcap):
-        pk = parse_raw(raw)
+    for ts, raw, orig_len in read_pcap(pcap):
+        pk = parse_raw(raw, orig_len)
         if pk: table.add_packet(pk, ts)
     flows = table.extract(min_pkts=1)
     vecs = [v for _, v in flows]

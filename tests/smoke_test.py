@@ -73,13 +73,85 @@ def t_flow_features_core():
     path = os.path.join(TMP, "rt.pcap")
     wrpcap(path, [p, p])
     recs = ff.read_pcap(path)
-    assert len(recs) == 2
+    assert len(recs) == 2 and len(recs[0]) == 3   # (ts, raw, orig_len)
     # FlowTable -> 21-dim vector
     table = ff.FlowTable()
-    for i, (ts, raw) in enumerate(recs):
-        table.add_packet(ff.parse_raw(raw), ts + i)
+    for i, (ts, raw, olen) in enumerate(recs):
+        table.add_packet(ff.parse_raw(raw, olen), ts + i)
     rows = table.extract(min_pkts=1)
     assert rows and len(rows[0][1]) == ff.N_FEATURES
+
+
+def t_parse_ipv6_vlan_snaplen():
+    """IPv6, stacked VLAN tags, and snaplen-truncated captures (F16)."""
+    import flow_features as ff
+    from scapy.all import Ether, IP, TCP, UDP, Dot1Q, Dot1AD, Raw
+    from scapy.layers.inet6 import IPv6, ICMPv6EchoRequest
+
+    # IPv6 + TCP
+    p6 = Ether()/IPv6(src="2001:db8::1", dst="2001:db8::2")/TCP(sport=1234, dport=443, flags="S")
+    pk = ff.parse_raw(bytes(p6))
+    assert pk is not None, "IPv6 frame not parsed"
+    assert pk["src_ip"] == "2001:db8::1" and pk["dst_port"] == 443
+    assert pk["proto"] == ff.PROTO_TCP and pk["flags"] & ff.SYN
+
+    # IPv6 + UDP
+    u6 = Ether()/IPv6(src="fe80::a", dst="fe80::b")/UDP(sport=5353, dport=5353)
+    assert ff.parse_raw(bytes(u6))["proto"] == ff.PROTO_UDP
+
+    # ICMPv6 normalises onto the ICMP feature value
+    i6 = Ether()/IPv6(src="2001:db8::1", dst="2001:db8::2")/ICMPv6EchoRequest()
+    assert ff.parse_raw(bytes(i6))["proto"] == ff.PROTO_ICMP
+
+    # single and double VLAN tags
+    v1 = Ether()/Dot1Q(vlan=10)/IP(src="1.1.1.1", dst="2.2.2.2")/TCP(sport=1, dport=80)
+    assert ff.parse_raw(bytes(v1))["dst_port"] == 80
+    v2 = Ether()/Dot1AD(vlan=20)/Dot1Q(vlan=10)/IP(src="1.1.1.1", dst="2.2.2.2")/TCP(sport=1, dport=80)
+    assert ff.parse_raw(bytes(v2))["dst_port"] == 80, "QinQ frame not parsed"
+
+    # non-IP frames are still ignored
+    assert ff.parse_raw(bytes(Ether(type=0x0806))) is None
+
+    # snaplen: stored bytes truncated, on-the-wire length preserved
+    full = bytes(Ether()/IP(src="1.1.1.1", dst="2.2.2.2")/TCP()/Raw(load=bytes(1400)))
+    truncated = full[:96]
+    assert ff.parse_raw(truncated)["length"] == 96
+    assert ff.parse_raw(truncated, len(full))["length"] == len(full), (
+        "orig_len ignored — length features shrink on a snaplen'd capture")
+
+
+def t_tcp_teardown_splits_flows():
+    """A 5-tuple reused after teardown becomes a new flow, not a merged one (F16)."""
+    import flow_features as ff
+    from scapy.all import Ether, IP, TCP
+
+    def pkt(flags, sport=5000, fwd=True):
+        a, b = ("10.0.0.1", "10.0.0.2") if fwd else ("10.0.0.2", "10.0.0.1")
+        sp, dp = (sport, 80) if fwd else (80, sport)
+        return ff.parse_raw(bytes(Ether()/IP(src=a, dst=b)/TCP(sport=sp, dport=dp, flags=flags)))
+
+    # RST closes the flow
+    t = ff.FlowTable()
+    t.add_packet(pkt("S"), 1.0)
+    t.add_packet(pkt("R", fwd=False), 1.1)
+    t.add_packet(pkt("S"), 50.0)                      # same 5-tuple, later
+    assert len(t.extract(window=None)) == 2, "RST did not close the flow"
+
+    # FIN in both directions closes it; one-sided FIN does not
+    t = ff.FlowTable()
+    t.add_packet(pkt("S"), 1.0)
+    t.add_packet(pkt("FA"), 2.0)
+    t.add_packet(pkt("A"), 2.1)
+    assert len(t.extract(window=None)) == 1, "one-sided FIN closed the flow early"
+    t.add_packet(pkt("FA", fwd=False), 2.2)
+    t.add_packet(pkt("S"), 60.0)
+    assert len(t.extract(window=None)) == 2, "bidirectional FIN did not close the flow"
+
+    # a plain long-lived flow is still one record
+    t = ff.FlowTable()
+    for i in range(20):
+        t.add_packet(pkt("PA"), 1.0 + i)
+    assert len(t.extract(window=None)) == 1
 
 
 def t_flowtable_window_and_dirty():
@@ -542,6 +614,9 @@ def t_multidataset_taxonomy():
     assert mds.to_category("Port Scan") == "recon"
     assert mds.to_category("SSH-Patator") == "bruteforce"
     assert mds.to_category("MITM ARP Spoofing") == "spoofing"
+    # unknown attack strings fall through to a catch-all, never to benign
+    assert mds.to_category("some-novel-attack") == "other_attack"
+    assert mds.to_category("normal") == "benign"
 
 
 def t_trivial_baseline():
@@ -625,20 +700,27 @@ def t_daemon_help():
 
 # ── 7. SFAF reproduction pipeline (no datasets) ───────────────────────────────
 def t_sfaf_trainer_guard():
-    # When datasets are absent, load_datasets() must fail cleanly (SystemExit).
-    # When present (e.g. via the Datasets symlink), it must load without error.
-    import importlib.util, glob
-    spec = importlib.util.spec_from_file_location(
-        "m02", os.path.join(ROOT, "code", "02_train_sfaf.py"))
-    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-    has_data = bool(glob.glob(os.path.join(ROOT, "Datasets", "MachineLearningCVE", "*.csv")))
-    try:
-        m.load_datasets()
-        if not has_data:
-            raise AssertionError("expected SystemExit without datasets")
-    except SystemExit:
-        if has_data:
-            raise AssertionError("unexpected SystemExit though datasets present")
+    """Missing datasets must fail cleanly with a pointer to the downloader.
+
+    Hermetic: points IOTIDS_DATASETS_ROOT at an empty directory rather than
+    branching on whether an external drive happens to be mounted. The previous
+    version read real CSVs off /Volumes and failed intermittently when the
+    volume stalled mid-suite.
+    """
+    empty = os.path.join(TMP, "no_datasets")
+    os.makedirs(empty, exist_ok=True)
+    env = {**os.environ, "IOTIDS_DATASETS_ROOT": empty}
+    r = subprocess.run(
+        [sys.executable, "-c",
+         "import importlib.util,sys;"
+         f"spec=importlib.util.spec_from_file_location('m02', {os.path.join(ROOT, 'code', '02_train_sfaf.py')!r});"
+         "m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m);"
+         "m.load_datasets()"],
+        capture_output=True, text=True, env=env, timeout=300)
+    assert r.returncode != 0, "load_datasets() succeeded with no datasets present"
+    combined = r.stdout + r.stderr
+    assert "missing core dataset" in combined, combined[-400:]
+    assert "download_datasets.py" in combined, "error does not point at the fix"
 
 
 def t_sfaf_onnx_export():
@@ -705,6 +787,8 @@ def main():
         ("requirements importable", t_requirements_importable),
         ("flow_features core", t_flow_features_core),
         ("flow_features CLI", t_flow_features_cli),
+        ("parse ipv6 / vlan / snaplen", t_parse_ipv6_vlan_snaplen),
+        ("tcp teardown splits flows", t_tcp_teardown_splits_flows),
         ("flowtable window + dirty", t_flowtable_window_and_dirty),
         ("flowtable thread safety", t_flowtable_thread_safety),
         ("verdict cache == full scoring", t_verdict_cache_matches_full_scoring),

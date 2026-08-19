@@ -58,5 +58,5 @@ models/live_ids_booster.json
 !models/live_ids.h
 !models/live_meta.json
 !models/xgb_edge.onnx
-!models/scaler_unified_4dataset.pkl
+!models/scaler_unified.pkl
 !models/edge_meta.json

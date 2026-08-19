@@ -90,7 +90,7 @@ Manual download (no Kaggle token):
   Bot-IoT     https://research.unsw.edu.au/projects/bot-iot-dataset
               -> UNSW_2018_IoT_Botnet CSVs -> Datasets/BotIoT/*.csv
 
-Column alignment for all five datasets lives in code/dataset_maps.py.
+Column alignment for every dataset lives in code/multidataset.py.
 Then run:  python code/02_train_sfaf.py
 """
 

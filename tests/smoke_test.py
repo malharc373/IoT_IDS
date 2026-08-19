@@ -214,28 +214,79 @@ def t_multidataset_taxonomy():
         assert set(df["y"].unique()) <= {0, 1}
 
 
-def t_dataset_maps():
+def t_alignment_contract():
+    """The SFAF alignment contract is data-free and must hold without downloads.
+
+    Guards the three rules in code/multidataset.py: canonical units are declared,
+    every dataset's coverage is declared, and a structurally absent feature is
+    NaN rather than zero (see vault/Findings/F01 and F12).
+    """
     import importlib.util
-    spec = importlib.util.spec_from_file_location("dm", os.path.join(ROOT, "code", "dataset_maps.py"))
-    dm = importlib.util.module_from_spec(spec); spec.loader.exec_module(dm)
-    import pandas as pd
-    # one synthetic row per raw schema; align must yield the 12 canonical cols
-    frames = {
-        "unsw_nb15": {"dur": 1.0, "spkts": 5, "dpkts": 4, "sbytes": 500,
-                      "dbytes": 400, "rate": 9, "sload": 100, "dload": 80,
-                      "smean": 60, "dmean": 70, "sjit": 300, "djit": 30, "label": 1},
-        "bot_iot": {"dur": 1.0, "spkts": 5, "dpkts": 4, "sbytes": 500, "dbytes": 400,
-                    "rate": 9, "srate": 5, "drate": 4, "min": 54, "max": 1400,
-                    "mean": 300, "stddev": 30, "label": 1},
-        "cic_iot_2023": {"flow_duration": 1.0, "Number": 5, "Tot sum": 500,
-                         "Tot size": 400, "Rate": 9, "Srate": 5, "Drate": 4,
-                         "Min": 54, "Max": 1400, "AVG": 300, "Std": 30,
-                         "Header_Length": 20, "label": 1},
-    }
-    for ds, row in frames.items():
-        out = dm.align(pd.DataFrame([row] * 3), ds)
-        assert list(out.columns) == dm.UNIFIED_FEATURES + ["label"], ds
-        assert len(out) == 3 and out.isna().sum().sum() == 0, ds
+    spec = importlib.util.spec_from_file_location("mds", os.path.join(ROOT, "code", "multidataset.py"))
+    mds = importlib.util.module_from_spec(spec); spec.loader.exec_module(mds)
+
+    assert len(mds.UNIFIED_FEATURES) == 12
+    # every canonical feature declares a unit, and durations are seconds
+    assert set(mds.FEATURE_UNITS) == set(mds.UNIFIED_FEATURES)
+    assert mds.FEATURE_UNITS["Flow Duration"] == "s"
+    for f in ("Flow Packets/s", "Fwd Packets/s", "Bwd Packets/s"):
+        assert mds.FEATURE_UNITS[f] == "packets/s", f
+    for f in ("Min Packet Length", "Max Packet Length", "Packet Length Mean",
+              "Packet Length Std"):
+        assert mds.FEATURE_UNITS[f] == "bytes", f
+
+    # every loader declares coverage, and the known-lossy ones declare gaps
+    for name in mds.LOADERS:
+        cov = mds.coverage(name)
+        assert set(cov) == set(mds.UNIFIED_FEATURES), name
+    # Zeek-derived schemas cannot supply packet-length min/max/std
+    for name in ("ton_iot", "x_iiotid", "iot_23", "unsw_nb15"):
+        cov = mds.coverage(name)
+        assert not cov["Min Packet Length"] and not cov["Packet Length Std"], name
+    # CIC-IoT-2023 has no forward/backward direction at all
+    assert not mds.coverage("cic_iot_2023")["Total Backward Packets"]
+
+    # _finish emits NaN (never 0.0) for a feature declared absent, and does not
+    # drop rows on account of it
+    import pandas as pd, numpy as np
+    src = pd.DataFrame({"a": [1.0, 2.0, 3.0]})
+    fmap = {f: None for f in mds.UNIFIED_FEATURES}
+    fmap["Flow Duration"] = "a"
+    out = mds._finish(src, fmap, [0, 1, 0], ["benign", "dos", "benign"], "synthetic")
+    assert len(out) == 3, "rows dropped for a structurally absent feature"
+    assert out["Flow Duration"].tolist() == [1.0, 2.0, 3.0]
+    assert out["Packet Length Std"].isna().all(), "absent feature was zero-filled"
+
+    # units helper: a rate over zero duration is unknown (NaN), not infinite
+    r = mds._rate(pd.Series([10.0, 10.0]), pd.Series([2.0, 0.0]))
+    assert r.iloc[0] == 5.0 and np.isnan(r.iloc[1])
+
+
+def t_multidataset_taxonomy():
+    # taxonomy normalization is data-free and must be stable
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mds", os.path.join(ROOT, "code", "multidataset.py"))
+    mds = importlib.util.module_from_spec(spec); spec.loader.exec_module(mds)
+    assert mds.to_category("BENIGN") == "benign"
+    assert mds.to_category("Mirai-UDP Flooding") == "botnet"
+    assert mds.to_category("DrDoS_DNS") == "dos"
+    assert mds.to_category("Port Scan") == "recon"
+    assert mds.to_category("SSH-Patator") == "bruteforce"
+    assert mds.to_category("MITM ARP Spoofing") == "spoofing"
+
+
+def t_trivial_baseline():
+    """The degenerate-classifier guard from vault/Findings/F02."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "cde", os.path.join(ROOT, "code", "cross_dataset_eval.py"))
+    cde = importlib.util.module_from_spec(spec); spec.loader.exec_module(cde)
+    import numpy as np
+    # balanced set: always-attack scores F1 = 2p/(1+p) = 0.667
+    assert abs(cde.trivial_f1(np.array([0, 1] * 50)) - 2 / 3) < 1e-9
+    # 99.9% attack (Bot-IoT shape): the trivial baseline is ~1.0
+    assert cde.trivial_f1(np.array([1] * 999 + [0])) > 0.999
+    assert cde.trivial_f1(np.zeros(10)) == 0.0
 
 
 # ── 6. Detector + daemon (offline / replay / live path) ───────────────────────
@@ -391,8 +442,9 @@ def main():
         ("model artifacts", t_model_artifacts),
         ("ips responder", t_ips_responder),
         ("c export + compile", t_c_export),
-        ("dataset alignment (SFAF)", t_dataset_maps),
+        ("SFAF alignment contract", t_alignment_contract),
         ("multidataset taxonomy", t_multidataset_taxonomy),
+        ("trivial-baseline guard", t_trivial_baseline),
         ("web dashboard", t_dashboard),
         ("detector classify known", t_detector_classify_known),
         ("daemon offline mode", t_daemon_offline),

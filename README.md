@@ -211,11 +211,12 @@ deploy/
   setup_pi.sh          Pi installer: venv + iot-ids + iot-ids-dashboard services
   iot-ids*.service, requirements-pi.txt, README_PI.md, README_MCU.md
 code/
-  multidataset.py      load + SFAF-align 10 flow datasets, normalized taxonomy
+  multidataset.py      load + SFAF-align 11 flow datasets; the single source of
+                       truth for feature alignment (units, coverage, NaN policy)
   cross_dataset_eval.py train-on-one/test-on-others generalization matrix
   transfer_experiment.py deployable feature transforms to close the transfer gap
   02_train_sfaf.py     headless SFAF reproduction (regenerates thesis artifacts)
-  dataset_maps.py      column alignment; download_datasets.py  dataset fetch
+  download_datasets.py dataset fetch (Kaggle + auth-free direct URLs)
   *.ipynb              EDA / SFAF / edge-deployment notebooks
 models/
   live_ids.onnx        deployable edge model (scaler baked in, ~90 KB)

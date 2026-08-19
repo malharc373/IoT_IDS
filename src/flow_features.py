@@ -210,15 +210,106 @@ def normalize_scapy(pkt) -> Optional[dict]:
     }
 
 
-# ── pcap reader (classic little/big-endian .pcap; no pcapng) ──────────────────
+# ── capture readers ───────────────────────────────────────────────────────────
+PCAP_MAGICS = {0xA1B2C3D4, 0xA1B23C4D, 0xD4C3B2A1, 0x4D3CB2A1}
+PCAPNG_SHB = 0x0A0D0D0A
+
+
+def read_pcapng(filename: str) -> List[tuple]:
+    """Return (ts, raw_bytes, orig_len) from a pcapng file.
+
+    Modern tshark/dumpcap write pcapng by default. The classic reader would
+    accept such a file, mis-detect the endianness from the Section Header Block
+    magic, and emit garbage records rather than fail — so the format is parsed
+    properly here (vault/Findings/F16).
+
+    Handles Enhanced Packet Blocks and Simple Packet Blocks, honours per-
+    interface timestamp resolution (if_tsresol), and tolerates multiple
+    sections with differing byte order.
+    """
+    out = []
+    with open(filename, "rb") as f:
+        endian = "<"
+        # per-interface (snaplen, ts divisor); index is the interface id
+        ifaces: List[tuple] = []
+        while True:
+            hdr = f.read(8)
+            if len(hdr) < 8:
+                break
+            btype = struct.unpack(endian + "I", hdr[0:4])[0]
+            if btype == PCAPNG_SHB:
+                bom = f.read(4)
+                if len(bom) < 4:
+                    break
+                # byte-order magic decides the endianness for this section
+                endian = "<" if struct.unpack("<I", bom)[0] == 0x1A2B3C4D else ">"
+                blen = struct.unpack(endian + "I", hdr[4:8])[0]
+                if blen < 12:
+                    break
+                f.read(blen - 12)          # rest of the SHB + trailing length
+                ifaces = []
+                continue
+            blen = struct.unpack(endian + "I", hdr[4:8])[0]
+            if blen < 12:
+                break
+            body = f.read(blen - 12)
+            f.read(4)                       # trailing block total length
+            if len(body) < blen - 12:
+                break
+
+            if btype == 0x00000001:         # Interface Description Block
+                snaplen = struct.unpack(endian + "I", body[4:8])[0] if len(body) >= 8 else 0
+                divisor = 1e6               # if_tsresol default: microseconds
+                opt = body[8:]
+                while len(opt) >= 4:
+                    ocode, olen = struct.unpack(endian + "HH", opt[0:4])
+                    if ocode == 0:
+                        break
+                    val = opt[4:4 + olen]
+                    if ocode == 9 and val:  # if_tsresol
+                        r = val[0]
+                        divisor = float(2 ** (r & 0x7F)) if r & 0x80 else float(10 ** r)
+                    opt = opt[4 + olen + ((-olen) % 4):]
+                ifaces.append((snaplen, divisor))
+
+            elif btype == 0x00000006:       # Enhanced Packet Block
+                if len(body) < 20:
+                    continue
+                iid, ts_hi, ts_lo, cap_len, orig_len = struct.unpack(
+                    endian + "IIIII", body[0:20])
+                divisor = ifaces[iid][1] if iid < len(ifaces) else 1e6
+                ts = ((ts_hi << 32) | ts_lo) / divisor
+                out.append((ts, body[20:20 + cap_len], orig_len))
+
+            elif btype == 0x00000003:       # Simple Packet Block (no timestamp)
+                if len(body) < 4:
+                    continue
+                orig_len = struct.unpack(endian + "I", body[0:4])[0]
+                snaplen = ifaces[0][0] if ifaces else 0
+                cap_len = min(orig_len, snaplen) if snaplen else orig_len
+                out.append((0.0, body[4:4 + cap_len], orig_len))
+    return out
+
+
+# ── pcap reader (classic little/big-endian .pcap; pcapng handled above) ───────
 def read_pcap(filename: str) -> List[tuple]:
-    """Return a list of (ts, raw_bytes, orig_len) from a classic .pcap file."""
+    """Return a list of (ts, raw_bytes, orig_len) from a capture file.
+
+    Dispatches to read_pcapng() for pcapng input and raises on anything that is
+    neither, rather than silently mis-parsing it.
+    """
     out = []
     with open(filename, "rb") as f:
         hdr = f.read(24)
         if len(hdr) < 24:
             return out
         magic = struct.unpack("<I", hdr[:4])[0]
+        if magic == PCAPNG_SHB:
+            return read_pcapng(filename)
+        if magic not in PCAP_MAGICS:
+            raise ValueError(
+                f"{filename}: not a pcap or pcapng file "
+                f"(magic 0x{magic:08X}). Classic pcap and pcapng are supported.")
         endian = "<" if magic in (0xA1B2C3D4, 0xA1B23C4D) else ">"
         while True:
             rec = f.read(16)

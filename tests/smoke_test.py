@@ -127,6 +127,85 @@ def t_parse_ipv6_vlan_snaplen():
         "orig_len ignored — length features shrink on a snaplen'd capture")
 
 
+def _build_pcapng(path, packets, tsresol=6):
+    """Hand-build a spec-conformant pcapng: SHB + IDB + Enhanced Packet Blocks.
+
+    Built by hand rather than via scapy so the reader is tested against the
+    format itself. `tsresol` is the if_tsresol exponent (6 = microseconds,
+    9 = nanoseconds).
+    """
+    import struct as _s
+
+    def block(btype, body):
+        total = 12 + len(body)
+        return _s.pack("<II", btype, total) + body + _s.pack("<I", total)
+
+    out = bytearray()
+    # Section Header Block: byte-order magic, version 1.0, unspecified length
+    out += block(0x0A0D0D0A, _s.pack("<IHHq", 0x1A2B3C4D, 1, 0, -1))
+    # Interface Description Block: LINKTYPE_ETHERNET, snaplen 0, if_tsresol opt
+    idb = _s.pack("<HHI", 1, 0, 0)
+    idb += _s.pack("<HH", 9, 1) + bytes([tsresol]) + b"\x00" * 3   # if_tsresol
+    idb += _s.pack("<HH", 0, 0)                                     # opt_endofopt
+    out += block(0x00000001, idb)
+    for ts, raw in packets:
+        ticks = int(round(ts * (10 ** tsresol)))
+        pad = (-len(raw)) % 4
+        body = _s.pack("<IIIII", 0, ticks >> 32, ticks & 0xFFFFFFFF,
+                       len(raw), len(raw)) + raw + b"\x00" * pad
+        out += block(0x00000006, body)
+    with open(path, "wb") as f:
+        f.write(bytes(out))
+
+
+def t_pcapng_reader():
+    """pcapng is parsed, not mis-parsed (vault/Findings/F16)."""
+    import flow_features as ff
+    from scapy.all import Ether, IP, TCP, wrpcap
+    import struct as _struct
+
+    base = 1700000000.0
+    pkts = [Ether()/IP(src="10.0.0.1", dst="10.0.0.2")/TCP(sport=1000+i, dport=80, flags="S")
+            for i in range(5)]
+    for i, p in enumerate(pkts):
+        p.time = base + i * 0.25
+
+    classic = os.path.join(TMP, "cap.pcap")
+    wrpcap(classic, pkts)
+    a = ff.read_pcap(classic)
+
+    # microsecond resolution
+    ng = os.path.join(TMP, "cap.pcapng")
+    _build_pcapng(ng, [(base + i * 0.25, bytes(p)) for i, p in enumerate(pkts)])
+    b = ff.read_pcap(ng)                      # dispatches to read_pcapng
+    assert len(b) == len(a) == 5, f"pcapng gave {len(b)} records, pcap gave {len(a)}"
+    assert [r[1] for r in b] == [r[1] for r in a], "pcapng payloads differ"
+    assert [r[2] for r in b] == [r[2] for r in a], "pcapng orig_len differs"
+    for (ts_a, _, _), (ts_b, _, _) in zip(a, b):
+        assert abs(ts_a - ts_b) < 1e-3, (ts_a, ts_b)
+
+    # the flows extracted from each format must be identical
+    assert ff.features_from_pcap(ng) == ff.features_from_pcap(classic)
+
+    # if_tsresol is honoured: nanosecond ticks must not read as microseconds
+    ng9 = os.path.join(TMP, "cap_ns.pcapng")
+    _build_pcapng(ng9, [(base + i * 0.25, bytes(p)) for i, p in enumerate(pkts)],
+                  tsresol=9)
+    c = ff.read_pcap(ng9)
+    assert abs(c[0][0] - base) < 1e-3, f"if_tsresol ignored: {c[0][0]} vs {base}"
+    assert abs((c[-1][0] - c[0][0]) - 1.0) < 1e-3
+
+    # a file that is neither raises instead of emitting garbage records
+    junk = os.path.join(TMP, "junk.bin")
+    with open(junk, "wb") as f:
+        f.write(_struct.pack("<I", 0xDEADBEEF) + b"\x00" * 64)
+    try:
+        ff.read_pcap(junk)
+        raise AssertionError("garbage file was accepted")
+    except ValueError as e:
+        assert "not a pcap or pcapng" in str(e)
+
+
 def t_tcp_teardown_splits_flows():
     """A 5-tuple reused after teardown becomes a new flow, not a merged one (F16)."""
     import flow_features as ff
@@ -840,6 +919,7 @@ TESTS = [
         ("flow_features core", t_flow_features_core),
         ("flow_features CLI", t_flow_features_cli),
         ("parse ipv6 / vlan / snaplen", t_parse_ipv6_vlan_snaplen),
+        ("pcapng reader", t_pcapng_reader),
         ("tcp teardown splits flows", t_tcp_teardown_splits_flows),
         ("flowtable window + dirty", t_flowtable_window_and_dirty),
         ("flowtable thread safety", t_flowtable_thread_safety),

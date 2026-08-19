@@ -253,8 +253,9 @@ tests/
 
 ## How detection works
 
-Each bidirectional flow is summarised by **22 features** (`src/flow_features.py`,
-IPv4 and IPv6, VLAN/QinQ-aware, TCP teardown-aware):
+Each bidirectional flow is summarised by **22 features** (`src/flow_features.py`
+— IPv4 and IPv6, VLAN/QinQ-aware, TCP teardown-aware, reads both pcap and
+pcapng):
 protocol, duration, packet/byte counts and rates, packet-size and inter-arrival
 statistics, TCP flag ratios, forward/backward asymmetry, the target **service
 port**, plus **host-context** features (distinct destination ports and IPs per

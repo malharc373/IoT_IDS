@@ -2,7 +2,7 @@
 
 ```
 IoT-IDS SYSTEM BENCHMARK   host=macOS-26.6.1-arm64-arm-64bit
-python=3.10.14  time=2026-08-19 23:37
+python=3.10.14  time=2026-08-20 00:44
 
 ====================================================================
   1. MODEL PARAMETERS & FOOTPRINT
@@ -27,22 +27,22 @@ python=3.10.14  time=2026-08-19 23:37
   2. ONNX INFERENCE LATENCY & THROUGHPUT
 ====================================================================
    batch   mean_ms   p50_ms   p99_ms   us/flow      flows/s
-       1    0.0067   0.0067   0.0073     6.740      148,363
-       8    0.0451   0.0448   0.0530     5.636      177,422
-      32    0.1527   0.1518   0.1631     4.772      209,544
-      64    0.1671   0.1551   0.2307     2.612      382,913
-     128    0.3229   0.2988   0.4435     2.523      396,422
-     512    1.2836   1.2006   1.7153     2.507      398,883
-    1024    2.5582   2.3862   3.4164     2.498      400,282
+       1    0.0068   0.0068   0.0075     6.801      147,036
+       8    0.0423   0.0421   0.0438     5.282      189,339
+      32    0.1430   0.1429   0.1476     4.470      223,719
+      64    0.1674   0.1555   0.2128     2.616      382,261
+     128    0.3186   0.2960   0.4456     2.489      401,790
+     512    1.2981   1.2087   1.8405     2.535      394,429
+    1024    2.6027   2.4396   3.5545     2.542      393,441
 
-  single-flow latency    : 6.7 us (p99 7.3 us)
-  peak throughput        : 400,282 flows/s (batch 1024)
+  single-flow latency    : 6.8 us (p99 7.5 us)
+  peak throughput        : 401,790 flows/s (batch 128)
 
 ====================================================================
   3. NATIVE C MODEL (MCU PATH)
 ====================================================================
-  C ids_predict latency  : 1214.7 ns/flow (1.215 us)
-  C throughput           : 823,221 flows/s (single thread)
+  C ids_predict latency  : 1214.6 ns/flow (1.215 us)
+  C throughput           : 823,330 flows/s (single thread)
   runtime deps           : none (pure C99, ~130 B stack)
 
 ====================================================================
@@ -53,7 +53,7 @@ python=3.10.14  time=2026-08-19 23:37
 ====================================================================
   5. END-TO-END (pcap -> verdicts)
 ====================================================================
-  4,674 flows classified in 100.7 ms (46,435 flows/s end-to-end)
+  4,674 flows classified in 100.2 ms (46,651 flows/s end-to-end)
   detected 4,575 attack flows / 99 benign
 
 ====================================================================
@@ -83,8 +83,8 @@ python=3.10.14  time=2026-08-19 23:37
 ====================================================================
   7. MEMORY FOOTPRINT
 ====================================================================
-  daemon runtime RSS     : 57.3 MB (onnxruntime + numpy only, clean process)
-  benchmark process RSS  : 312.7 MB (harness — imports pandas/xgboost; NOT the daemon)
+  daemon runtime RSS     : 56.1 MB (onnxruntime + numpy only, clean process)
+  benchmark process RSS  : 314.9 MB (harness — imports pandas/xgboost; NOT the daemon)
   edge runtime deps      : onnxruntime + numpy (+ scapy for live sniff)
   MCU C model RAM        : ~130 bytes stack, 0 heap
 
@@ -92,7 +92,7 @@ python=3.10.14  time=2026-08-19 23:37
   8. RASPBERRY PI 4 PROJECTION (host x 12)
 ====================================================================
   host                   : Apple M4 (arm64)
-  ONNX single-flow (Pi)  : ~80.9 us/flow (~12,364 flows/s)
-  C model (Pi)           : ~14.58 us/flow (~68,602 flows/s)
+  ONNX single-flow (Pi)  : ~81.6 us/flow (~12,253 flows/s)
+  C model (Pi)           : ~14.57 us/flow (~68,611 flows/s)
   verdict                : easily real-time on a Pi 4 for home/IIoT link rates; sniffing/aggregation, not inference, is the limit.
 ```

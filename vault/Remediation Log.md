@@ -34,7 +34,8 @@ Work done against [[Review 2026-08-19]], in order. Branch
 | F18 | [[F18 - Pipeline ONNX export silently ships a broken model]] | critical | fixed — *found during remediation* |
 | F19 | [[F19 - IoT-23 labels parsed as all-benign]] | critical | fixed — *found during remediation* |
 
-Test suite: **23 passed / 1 failed** before → **40 passed / 0 failed** after.
+Test suite: **23 passed / 1 failed** before → **40 passed / 0 failed** after,
+runnable under both the standalone runner and pytest, with CI on every push.
 
 ## Commits
 
@@ -50,6 +51,14 @@ Test suite: **23 passed / 1 failed** before → **40 passed / 0 failed** after.
 | `1a9e543` | secret hygiene (see below) |
 | `443a0be` | F13–F15, F18 — scenario split, background mixing, ablation, export fix |
 | `ed28743` | F16 — IPv6, snaplen, TCP teardown, dead code, pickles |
+| `7f91801` | F17 — benchmark regenerated, documented counts asserted, vault completed |
+| `604ff2b` | teardown rule + corpus key correction (caught by the end-to-end run) |
+| `119f3bd` | SFAF scaler removed; pytest front-end + GitHub Actions CI |
+| — | inline-bridge deployment guide (`deploy/README_PI.md` §6) |
+| — | pcapng reader (the old one mis-parsed rather than rejected) |
+| — | syslog/CEF export to a SIEM |
+| — | F19 — IoT-23 labels, memory-bounded loader, taxonomy |
+| — | EXP03 threshold transfer + eleven-dataset rerun |
 
 ## Course corrections worth recording
 
@@ -112,6 +121,21 @@ recall 1.00 → 0.66), and `build_corpus` compared bare 5-tuples against the new
 
 Unit tests assert the property you thought to check. Running the whole thing and
 looking at the output is what catches the property you did not.
+
+### A third self-inflicted trap, caught by its own guard
+
+`code/threshold_transfer.py` was written *because of*
+[[F02 - Cross-domain F1 includes degenerate classifiers]] — and its first run
+fell straight into the same hole. On domains with no ranking signal, fitting a
+threshold to maximise F1 rediscovers the all-attack classifier, and the script
+duly reported "recovered 99.7% of the calibration gap" for two datasets whose
+oracle F1 was exactly the trivial 0.667.
+
+Knowing about a failure mode is not the same as being immune to it. The fix was
+structural rather than attentional: every row now carries
+`oracle_lift = oracle_f1 − trivial_f1`, and the summary refuses to claim a win
+without it. Same shape as the export guards — make the check able to fail, not
+merely able to print.
 
 ## The through-line
 

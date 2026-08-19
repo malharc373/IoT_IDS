@@ -9,9 +9,9 @@ skew.
 Pipeline:
     raw packet bytes ──parse_raw()──▶ normalized packet dict
     normalized dict  ──FlowTable──▶ bidirectional flow records
-    flow record      ──features()──▶ 21-dim float vector (FEATURE_NAMES)
+    flow record      ──features()──▶ 22-dim float vector (FEATURE_NAMES)
 
-The 21 features are chosen to make different attack classes separable:
+The 22 features are chosen to make different attack classes separable:
   * flow-level shape/rate/flag stats catch floods and malformed flows
   * host-context rolling stats (distinct dst ports / IPs per source) catch
     reconnaissance (port scans) that is invisible at the single-flow level.
@@ -24,6 +24,7 @@ from __future__ import annotations
 import math
 import socket
 import struct
+import threading
 import collections
 from typing import Dict, Iterable, List, Optional
 
@@ -185,6 +186,7 @@ class Flow:
         "fwd_pkts", "bwd_pkts", "fwd_bytes", "bwd_bytes",
         "lengths", "iats",
         "syn", "fin", "rst", "ack",
+        "dirty", "ctx_sig",
     )
 
     def __init__(self, pkt, ts):
@@ -204,8 +206,17 @@ class Flow:
         self.lengths: List[int] = []
         self.iats: List[float] = []
         self.syn = self.fin = self.rst = self.ack = 0
+        # set whenever the flow gains a packet; cleared once its feature vector
+        # has been handed out. Lets the live path re-score only what changed.
+        self.dirty = True
+        # host-context triple used the last time this flow was scored. Three of
+        # the 22 features are host-context, so a flow's vector changes when its
+        # PEERS change even if the flow itself gained no packets — the cache
+        # must invalidate on that too, or a scan's verdicts go stale.
+        self.ctx_sig = None
 
     def update(self, pkt, ts, forward: bool):
+        self.dirty = True
         if ts > self.last_ts:
             self.iats.append(ts - self.last_ts)
         self.last_ts = ts
@@ -288,24 +299,42 @@ class FlowTable:
     """Aggregates packets into bidirectional flows and computes host context.
 
     Works for both batch (whole pcap) and streaming (live) use.
+
+    THREAD SAFETY (see vault/Findings/F05)
+    --------------------------------------
+    In live mode scapy's AsyncSniffer calls add_packet() from its own thread
+    while the daemon's flush loop iterates the same dict. On CPython that
+    raises "dictionary changed size during iteration" — an intermittent crash
+    under exactly the traffic volume the sensor exists to handle. Every method
+    that touches `self.flows` takes `self.lock`, and the lock is re-entrant and
+    public so a caller can hold it across a compound operation.
     """
 
     def __init__(self):
         self.flows: Dict[tuple, Flow] = collections.OrderedDict()
+        self.lock = threading.RLock()
 
     def add_packet(self, pkt: dict, ts: float):
-        key, forward = _flow_key(pkt)
-        f = self.flows.get(key)
-        if f is None:
-            f = Flow(pkt, ts)
-            self.flows[key] = f
-        f.update(pkt, ts, forward)
+        with self.lock:
+            key, forward = _flow_key(pkt)
+            f = self.flows.get(key)
+            if f is None:
+                f = Flow(pkt, ts)
+                self.flows[key] = f
+            f.update(pkt, ts, forward)
+
+    def __len__(self):
+        with self.lock:
+            return len(self.flows)
 
     # -- host context ----------------------------------------------------------
     def _host_context(self, window: Optional[float] = None) -> Dict[str, dict]:
         """For each source IP, distinct dst ports / dst IPs / flow count.
         `window` limits to flows whose ts_end is within `window` s of the latest
-        packet (used live); None = use all flows (batch)."""
+        packet (used live); None = use all flows (batch).
+
+        Caller must hold self.lock.
+        """
         latest = max((f.ts_end for f in self.flows.values()), default=0.0)
         per_src = collections.defaultdict(
             lambda: {"dst_ports": set(), "dst_ips": set(), "flow_count": 0}
@@ -327,12 +356,21 @@ class FlowTable:
             for ip, v in per_src.items()
         }
 
-    def extract(self, min_pkts: int = 1, window: Optional[float] = None):
-        """Return list of (flow_meta, feature_vector) for every flow."""
+    def _rows(self, min_pkts, window, clear_dirty):
+        """Core extraction. Caller must hold self.lock.
+
+        Yields (key, meta, vector, was_dirty). `window` bounds BOTH the host
+        context and the set of flows returned — the pre-2026-08 code applied it
+        only to the host context, so every flush re-scored the entire table
+        regardless of age (vault/Findings/F04).
+        """
         ctx = self._host_context(window=window)
+        latest = max((f.ts_end for f in self.flows.values()), default=0.0)
         out = []
         for key, f in self.flows.items():
             if f.tot_pkts < min_pkts:
+                continue
+            if window is not None and (latest - f.ts_end) > window:
                 continue
             host = ctx.get(f.src_ip, {"dst_ports": 1, "dst_ips": 1, "flow_count": 1})
             meta = {
@@ -344,15 +382,47 @@ class FlowTable:
                 "ts_start": f.ts_start,
                 "ts_end": f.ts_end,
             }
-            out.append((meta, f.features(host)))
+            sig = (host["dst_ports"], host["dst_ips"], host["flow_count"])
+            # re-score iff the feature vector could have changed: new packets,
+            # or a changed host-context triple, or never scored at all
+            needs = f.dirty or f.ctx_sig != sig
+            if clear_dirty:
+                f.dirty = False
+                f.ctx_sig = sig
+            out.append((key, meta, f.features(host), needs))
         return out
 
+    def extract(self, min_pkts: int = 1, window: Optional[float] = None):
+        """Return list of (flow_meta, feature_vector) for every live flow.
+
+        Batch interface — does not touch the dirty flags.
+        """
+        with self.lock:
+            return [(m, v) for _, m, v, _ in
+                    self._rows(min_pkts, window, clear_dirty=False)]
+
+    def extract_live(self, min_pkts: int = 1, window: Optional[float] = None):
+        """Return list of (key, meta, vector, needs_scoring) and clear dirty.
+
+        `needs_scoring` is True for flows that gained packets since the last
+        call. The daemon scores only those and reuses cached verdicts for the
+        rest, so per-flush inference cost tracks new traffic rather than table
+        size. Host context is still recomputed over the whole window, because a
+        flow's context features change when its *peers* change.
+        """
+        with self.lock:
+            return self._rows(min_pkts, window, clear_dirty=True)
+
     def prune(self, older_than: float, now: float):
-        """Drop flows idle longer than `older_than` seconds (live memory cap)."""
-        dead = [k for k, f in self.flows.items() if (now - f.last_ts) > older_than]
-        for k in dead:
-            del self.flows[k]
-        return len(dead)
+        """Drop flows idle longer than `older_than` seconds (live memory cap).
+
+        Returns the list of evicted keys so callers can drop cached verdicts.
+        """
+        with self.lock:
+            dead = [k for k, f in self.flows.items() if (now - f.last_ts) > older_than]
+            for k in dead:
+                del self.flows[k]
+            return dead
 
 
 # ── Convenience: pcap → features ──────────────────────────────────────────────

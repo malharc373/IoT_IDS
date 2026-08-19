@@ -82,6 +82,108 @@ def t_flow_features_core():
     assert rows and len(rows[0][1]) == ff.N_FEATURES
 
 
+def t_flowtable_window_and_dirty():
+    """window bounds the returned flows, not just host context (F04)."""
+    import flow_features as ff
+    from scapy.all import Ether, IP, TCP
+    table = ff.FlowTable()
+    base = 1000.0
+    # one old flow at t=0, one recent at t=500
+    for i, t in ((1, base), (2, base + 500)):
+        p = Ether()/IP(src=f"10.0.0.{i}", dst="10.0.0.9")/TCP(sport=1000+i, dport=80, flags="S")
+        table.add_packet(ff.normalize_scapy(p), t)
+    assert len(table.extract(window=None)) == 2
+    assert len(table.extract(window=60.0)) == 1, "window did not bound the flow set"
+
+    # dirty tracking: extract_live clears it, a new packet sets it again
+    rows = table.extract_live(window=None)
+    assert all(r[3] for r in rows), "first extract_live should report all dirty"
+    rows = table.extract_live(window=None)
+    assert not any(r[3] for r in rows), "dirty flag not cleared"
+    p = Ether()/IP(src="10.0.0.2", dst="10.0.0.9")/TCP(sport=1002, dport=80, flags="A")
+    table.add_packet(ff.normalize_scapy(p), base + 501)
+    rows = table.extract_live(window=None)
+    assert sum(1 for r in rows if r[3]) == 1, "only the updated flow should be dirty"
+
+    # extract() must NOT disturb dirty flags (batch callers)
+    table.extract(window=None)
+    assert not any(r[3] for r in table.extract_live(window=None))
+
+
+def t_flowtable_thread_safety():
+    """add_packet from other threads while the main thread extracts (F05).
+
+    Without the lock this raises RuntimeError: dictionary changed size during
+    iteration, intermittently, under exactly the load the sensor exists for.
+    """
+    import threading
+    import flow_features as ff
+    from scapy.all import Ether, IP, TCP
+    table = ff.FlowTable()
+    stop = threading.Event()
+    errors = []
+
+    def writer(tid):
+        try:
+            i = 0
+            while not stop.is_set():
+                p = Ether()/IP(src=f"10.{tid}.0.{i % 250}", dst="10.9.9.9") / \
+                    TCP(sport=(i % 60000) + 1024, dport=80, flags="S")
+                table.add_packet(ff.normalize_scapy(p), 1000.0 + i * 0.001)
+                i += 1
+        except Exception as e:      # pragma: no cover - the bug under test
+            errors.append(e)
+
+    threads = [threading.Thread(target=writer, args=(t,), daemon=True) for t in range(4)]
+    for t in threads:
+        t.start()
+    try:
+        for _ in range(60):
+            table.extract(min_pkts=1, window=30.0)
+            table.extract_live(min_pkts=1, window=30.0)
+            table.prune(older_than=5.0, now=2000.0)
+    finally:
+        stop.set()
+        for t in threads:
+            t.join(timeout=5)
+    assert not errors, f"concurrent access raised: {errors[:3]}"
+
+
+def t_verdict_cache_matches_full_scoring():
+    """Incremental scoring must give byte-identical results to scoring all (F04)."""
+    from ids_daemon import Detector, VerdictCache, aggregate
+    import flow_features as ff
+    import traffic_gen as tg
+    det = Detector()
+    table = ff.FlowTable()
+    pkts = sorted(tg.generate("portscan", seed=33221), key=lambda x: float(x.time))
+    cache = VerdictCache(det)
+
+    # feed in three chunks, flushing through the cache after each
+    step = max(len(pkts) // 3, 1)
+    for c in range(0, len(pkts), step):
+        for p in pkts[c:c + step]:
+            pk = ff.parse_raw(bytes(p))
+            if pk:
+                table.add_packet(pk, float(p.time))
+        rows = table.extract_live(min_pkts=1, window=None)
+        metas, results = cache.classify_rows(rows)
+
+    # ground truth: score every flow from scratch
+    flows = table.extract(min_pkts=1, window=None)
+    ref = det.classify([v for _, v in flows])
+    assert [k for k, _ in ref] == [k for k, _ in results], "cached verdicts diverged"
+    assert aggregate([m for m, _ in flows], ref) == aggregate(metas, results)
+
+    # A quiet flush must score nothing. (A single-source scan re-scores every
+    # flow each flush by design: each new flow changes that source's
+    # host-context triple, so every sibling flow's vector genuinely changed.)
+    before = cache.scored
+    cache.classify_rows(table.extract_live(min_pkts=1, window=None))
+    assert cache.scored == before, "re-scored flows that could not have changed"
+    assert cache.reused > 0
+
+
 def t_flow_features_cli():
     from scapy.all import Ether, IP, TCP, wrpcap
     path = os.path.join(TMP, "cli.pcap")
@@ -436,6 +538,9 @@ def main():
         ("requirements importable", t_requirements_importable),
         ("flow_features core", t_flow_features_core),
         ("flow_features CLI", t_flow_features_cli),
+        ("flowtable window + dirty", t_flowtable_window_and_dirty),
+        ("flowtable thread safety", t_flowtable_thread_safety),
+        ("verdict cache == full scoring", t_verdict_cache_matches_full_scoring),
         ("traffic_gen all kinds", t_traffic_gen_all_kinds),
         ("traffic_gen CLI", t_traffic_gen_cli),
         ("build_corpus helper", t_build_corpus_helper),

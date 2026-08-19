@@ -83,6 +83,52 @@ class Detector:
         return res
 
 
+class VerdictCache:
+    """Remembers each flow's last verdict so a flush only scores what changed.
+
+    The live loop used to re-run ONNX over every flow in the table on every
+    flush (default 2 s) until the 120 s idle eviction — so the same port scan
+    was re-classified ~60 times, and per-flush cost tracked table size rather
+    than new traffic (vault/Findings/F04).
+
+    Aggregation still needs a verdict for *every* windowed flow, not just the
+    changed ones, or an incident's flow count would reset each flush. So the
+    cache returns cached verdicts for clean flows and scores only dirty ones.
+    """
+
+    def __init__(self, detector):
+        self.det = detector
+        self.verdicts = {}          # flow key -> (kind, confidence)
+        self.scored = 0             # flows actually run through the model
+        self.reused = 0             # flows served from cache
+
+    def classify_rows(self, rows):
+        """rows: list of (key, meta, vector, needs_scoring) from extract_live.
+
+        Returns (metas, results) aligned, exactly as if everything was scored.
+        """
+        todo = [(i, r) for i, r in enumerate(rows)
+                if r[3] or r[0] not in self.verdicts]
+        if todo:
+            fresh = self.det.classify([r[2] for _, r in todo])
+            for (i, r), verdict in zip(todo, fresh):
+                self.verdicts[r[0]] = verdict
+        self.scored += len(todo)
+        self.reused += len(rows) - len(todo)
+        metas = [r[1] for r in rows]
+        results = [self.verdicts[r[0]] for r in rows]
+        return metas, results
+
+    def forget(self, keys):
+        for k in keys:
+            self.verdicts.pop(k, None)
+
+    def stats(self):
+        tot = self.scored + self.reused
+        pct = (self.reused / tot * 100) if tot else 0.0
+        return f"scored={self.scored:,} reused={self.reused:,} ({pct:.0f}% cached)"
+
+
 def aggregate(metas, results):
     """Group attack flows by (src_ip, kind) into one incident each."""
     inc = collections.OrderedDict()
@@ -208,14 +254,14 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
         print("[WARN] empty pcap"); return []
     t0 = packets[0][0]
     table = FlowTable()
+    cache = VerdictCache(det)
     seen = {}          # (src,kind) -> last flow count alerted
     next_ckpt = t0 + step
     n_pkts = 0
 
     def flush(now):
-        flows = table.extract(min_pkts=1, window=window)
-        metas = [m for m, _ in flows]
-        results = det.classify([v for _, v in flows])
+        rows = table.extract_live(min_pkts=1, window=window)
+        metas, results = cache.classify_rows(rows)
         for a in sorted(aggregate(metas, results), key=lambda x: -x["flows"]):
             if a["avg_conf"] < min_conf:
                 continue
@@ -248,6 +294,7 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
     n_benign = sum(1 for k, _ in results if k == "benign")
     incidents = aggregate([m for m, _ in flows], results)
     _summary(len(flows), n_benign, incidents, alog, n_pkts, 0)
+    print(DIM(f"  [cache] {cache.stats()}"))
     return incidents
 
 
@@ -262,23 +309,32 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
     print(CYA(f"\n[*] Live IDS on {iface}  (Ctrl-C to stop)"))
     print(DIM(f"    window={window}s flush={flush_s}s model=live_ids.onnx"))
     table = FlowTable()
+    cache = VerdictCache(det)
     seen = {}
-    stats = {"pkts": 0}
+    stats = {"pkts": 0, "last_ts": time.time()}
 
     def on_pkt(p):
         pk = normalize_scapy(p)
-        if pk is not None:
-            table.add_packet(pk, time.time()); stats["pkts"] += 1
+        if pk is None:
+            return
+        # Use the CAPTURE timestamp, not the time this callback happened to run.
+        # Under burst load the callback lags the wire by a variable amount, which
+        # distorts every inter-arrival feature relative to training — where pcap
+        # timestamps are used (vault/Findings/F05).
+        ts = float(getattr(p, "time", 0.0)) or time.time()
+        table.add_packet(pk, ts)
+        stats["pkts"] += 1
+        if ts > stats["last_ts"]:
+            stats["last_ts"] = ts
 
     sniffer = AsyncSniffer(iface=iface, prn=on_pkt, store=False)
     sniffer.start()
     try:
         while True:
             time.sleep(flush_s)
-            now = time.time()
-            flows = table.extract(min_pkts=1, window=window)
-            metas = [m for m, _ in flows]
-            results = det.classify([v for _, v in flows])
+            now = stats["last_ts"]
+            rows = table.extract_live(min_pkts=1, window=window)
+            metas, results = cache.classify_rows(rows)
             for a in sorted(aggregate(metas, results), key=lambda x: -x["flows"]):
                 if a["avg_conf"] < min_conf:
                     continue
@@ -290,9 +346,10 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
                         responder.handle(a["src_ip"], a["kind"], a["avg_conf"])
             if responder is not None:
                 responder.expire()
-            table.prune(older_than=idle_evict, now=now)
+            cache.forget(table.prune(older_than=idle_evict, now=now))
             print(DIM(f"  [{dt.datetime.now():%H:%M:%S}] pkts={stats['pkts']:,} "
-                      f"flows={len(table.flows):,} incidents={alog.n}"), end="\r")
+                      f"flows={len(table):,} incidents={alog.n} "
+                      f"| {cache.stats()}"), end="\r")
     except KeyboardInterrupt:
         print(CYA("\n[*] stopping..."))
     finally:
@@ -302,6 +359,7 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
         n_benign = sum(1 for k, _ in results if k == "benign")
         incidents = aggregate([m for m, _ in flows], results)
         _summary(len(flows), n_benign, incidents, alog, stats["pkts"], 0)
+        print(DIM(f"  [cache] {cache.stats()}"))
 
 
 def main():

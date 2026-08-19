@@ -515,7 +515,21 @@ def load_ciciot2023(root):
 
 def _read_zeek(path, usecols=None):
     """Parse a Zeek TSV log (conn.log.labeled): '#fields' line gives columns,
-    '#' lines are comments, tab-separated, '-' means empty."""
+    '#' lines are comments, tab-separated, '-' means empty.
+
+    IoT-23 quirk: its labelled conn logs separate the final
+    `tunnel_parents / label / detailed-label` triple with **spaces** rather
+    than tabs, in both the #fields header and the data rows:
+
+        #fields  ts  uid  ...  resp_ip_bytes  tunnel_parents   label   detailed-label
+        ...      ...          0              (empty)   Malicious   PartOfAHorizontalPortScan
+
+    Splitting on tabs alone therefore yields one column literally named
+    "tunnel_parents   label   detailed-label", no `label` column at all, and a
+    loader that silently reads every row as benign — which is how IoT-23, a
+    malware-capture dataset, came out 0.0% attack. Any column name containing
+    whitespace is treated as a composite and expanded.
+    """
     fields = None
     with open(path, "r", errors="ignore") as f:
         for line in f:
@@ -526,6 +540,13 @@ def _read_zeek(path, usecols=None):
         return pd.DataFrame()
     df = pd.read_csv(path, sep="\t", comment="#", names=fields,
                      na_values="-", low_memory=False)
+    for col in list(df.columns):
+        parts = col.split()
+        if len(parts) > 1:
+            sub = df[col].astype(str).str.split(r"\s+", expand=True)
+            for j, name in enumerate(parts):
+                df[name] = sub[j] if j < sub.shape[1] else np.nan
+            df = df.drop(columns=[col])
     return df
 
 

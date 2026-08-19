@@ -479,6 +479,63 @@ def t_c_export():
                        check=True, capture_output=True)
 
 
+def t_syslog_cef_sink():
+    """Incidents reach a SIEM as parseable CEF, and a dead SIEM is survivable."""
+    import socket, re
+    from ids_daemon import SyslogSink, AlertLog
+
+    srv = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.settimeout(3)
+    port = srv.getsockname()[1]
+
+    inc = {"src_ip": "203.0.113.7", "kind": "portscan", "proto": 6, "flows": 593,
+           "pkts": 1186, "bytes": 71160, "n_dst_ips": 1, "n_dst_ports": 593,
+           "avg_conf": 0.9812}
+    sink = SyslogSink(f"127.0.0.1:{port}", fmt="cef")
+    sink.emit(dict(inc), "recon")
+    msg = srv.recvfrom(65535)[0].decode()
+
+    # RFC 5424 framing then a CEF payload
+    assert msg.startswith("<"), msg[:40]
+    m = re.search(r"CEF:0\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|([^|]*)\|(\d+)\|(.*)$", msg)
+    assert m, f"not parseable CEF: {msg}"
+    vendor, product, ver, sig, name, sev, ext = m.groups()
+    assert sig == "portscan" and name == "recon/portscan"
+    assert int(sev) == SyslogSink.SEVERITY["recon"]
+    kv = dict(p.split("=", 1) for p in ext.split(" ") if "=" in p)
+    assert kv["src"] == "203.0.113.7" and kv["cnt"] == "593"
+    assert kv["cs1Label"] == "dstPorts" and kv["cs1"] == "593"
+    assert kv["cfp1"] == "0.9812"
+    assert sink.sent == 1 and sink.failed == 0
+
+    # severity tracks category
+    sink.emit(dict(inc, kind="mirai"), "botnet")
+    assert f"|{SyslogSink.SEVERITY['botnet']}|" in srv.recvfrom(65535)[0].decode()
+
+    # json format is accepted too
+    sj = SyslogSink(f"127.0.0.1:{port}", fmt="json")
+    sj.emit(dict(inc), "recon")
+    body = srv.recvfrom(65535)[0].decode().split("- - - ", 1)[1]
+    assert json.loads(body)["src_ip"] == "203.0.113.7"
+    srv.close()
+
+    # AlertLog fans out to sinks
+    log = os.path.join(TMP, "siem", "alerts.jsonl")
+    srv2 = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    srv2.bind(("127.0.0.1", 0)); srv2.settimeout(3)
+    s2 = SyslogSink(f"127.0.0.1:{srv2.getsockname()[1]}")
+    alog = AlertLog(log, sinks=[s2])
+    alog.emit(dict(inc)); alog.close()
+    assert b"CEF:0" in srv2.recvfrom(65535)[0]
+    srv2.close()
+
+    # an unreachable SIEM must never take the sensor down
+    dead = SyslogSink("192.0.2.1:9")          # TEST-NET-1, black hole
+    dead.emit(dict(inc), "recon")
+    assert dead.sent + dead.failed == 1, "send neither succeeded nor was counted"
+
+
 def t_dashboard():
     import importlib.util, urllib.request, urllib.error, threading, json as _json
     from http.server import ThreadingHTTPServer
@@ -934,6 +991,7 @@ TESTS = [
         ("SFAF alignment contract", t_alignment_contract),
         ("multidataset taxonomy", t_multidataset_taxonomy),
         ("trivial-baseline guard", t_trivial_baseline),
+        ("syslog/CEF SIEM export", t_syslog_cef_sink),
         ("web dashboard", t_dashboard),
         ("dashboard auth + binding", t_dashboard_auth_and_binding),
         ("dashboard token file", t_dashboard_token_file),

@@ -169,6 +169,78 @@ def fmt_incident(a):
             f"{a['n_dst_ips']:>3} dst-ips  {a['pkts']:>6} pkts  {conf}")
 
 
+class SyslogSink:
+    """Emit incidents to a SIEM over syslog, as CEF or JSON.
+
+    A sensor that only writes a local JSONL file cannot participate in anything
+    larger than itself. CEF (ArcSight Common Event Format) is the widest-support
+    option — Splunk, QRadar, Sentinel and Elastic all parse it — and RFC 5424
+    syslog over UDP needs no dependency beyond the stdlib, which keeps the Pi
+    runtime as it is.
+
+    Delivery is best-effort by design: a SIEM that is down or unreachable must
+    never take the sensor with it, so send failures are counted and reported,
+    not raised.
+    """
+
+    # coarse category -> CEF severity (0-10)
+    SEVERITY = {"recon": 3, "bruteforce": 5, "dos": 7, "botnet": 8, "attack": 5}
+    FACILITY = 13          # log audit
+    PRIORITY = FACILITY * 8 + 4      # facility * 8 + severity(warning)
+
+    def __init__(self, target, fmt="cef", product="IoT-IDS", vendor="IoT-IDS",
+                 version="1.0"):
+        import socket as _socket
+        host, _, port = target.partition(":")
+        self.addr = (host, int(port) if port else 514)
+        self.fmt = fmt
+        self.product, self.vendor, self.version = product, vendor, version
+        self.sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        self.host = _socket.gethostname()
+        self.sent = 0
+        self.failed = 0
+
+    @staticmethod
+    def _esc(v):
+        """CEF extension values escape backslash and equals."""
+        return str(v).replace("\\", "\\\\").replace("=", "\\=")
+
+    def _cef(self, a, category):
+        sev = self.SEVERITY.get(category, 5)
+        ext = " ".join(f"{k}={self._esc(v)}" for k, v in (
+            ("src", a["src_ip"]),
+            ("proto", PROTO_NAME.get(a["proto"], a["proto"])),
+            ("cnt", a["flows"]),
+            ("cs1Label", "dstPorts"), ("cs1", a["n_dst_ports"]),
+            ("cs2Label", "dstIps"), ("cs2", a["n_dst_ips"]),
+            ("cn1Label", "packets"), ("cn1", a["pkts"]),
+            ("cn2Label", "bytes"), ("cn2", a["bytes"]),
+            ("cfp1Label", "confidence"), ("cfp1", round(a["avg_conf"], 4)),
+        ))
+        # CEF header pipes must be escaped; our fields never contain one
+        return (f"CEF:0|{self.vendor}|{self.product}|{self.version}|"
+                f"{a['kind']}|{category}/{a['kind']}|{sev}|{ext}")
+
+    def emit(self, a, category="attack"):
+        ts = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        if self.fmt == "cef":
+            body = self._cef(a, category)
+        else:
+            body = json.dumps({"ts": ts, "category": category, **{
+                k: v for k, v in a.items()}})
+        msg = f"<{self.PRIORITY}>1 {ts} {self.host} {self.product} - - - {body}"
+        try:
+            self.sock.sendto(msg.encode("utf-8", "replace")[:65000], self.addr)
+            self.sent += 1
+        except Exception:
+            # a dead SIEM must not take the sensor down with it
+            self.failed += 1
+
+    def status(self):
+        return (f"syslog {self.addr[0]}:{self.addr[1]} fmt={self.fmt} "
+                f"sent={self.sent} failed={self.failed}")
+
+
 class AlertLog:
     """Append-only JSONL alert feed with size-based rotation.
 
@@ -178,7 +250,7 @@ class AlertLog:
     the dashboard detects the rotation and re-reads cleanly.
     """
 
-    def __init__(self, path, max_bytes=32 * 1024 * 1024, backups=3):
+    def __init__(self, path, max_bytes=32 * 1024 * 1024, backups=3, sinks=None):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.path = path
         self.max_bytes = max_bytes
@@ -186,6 +258,7 @@ class AlertLog:
         self.fh = open(path, "a")
         self.n = 0
         self.by_kind = collections.Counter()
+        self.sinks = list(sinks or [])      # e.g. SyslogSink, fanned out to
 
     def _rotate_if_needed(self):
         if self.max_bytes <= 0:
@@ -212,6 +285,8 @@ class AlertLog:
                "dst_ips": a["n_dst_ips"], "dst_ports": a["n_dst_ports"],
                "confidence": round(a["avg_conf"], 4)}
         self.fh.write(json.dumps(rec) + "\n"); self.fh.flush()
+        for sink in self.sinks:
+            sink.emit(a, CATEGORIES.get(a["kind"], "attack"))
         self._rotate_if_needed()
 
     def close(self):
@@ -398,6 +473,12 @@ def main():
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--meta", default=DEFAULT_META)
     ap.add_argument("--log", default=os.path.join(ROOT, "logs", "alerts.jsonl"))
+    ap.add_argument("--syslog", default=None, metavar="HOST[:PORT]",
+                    help="also send incidents to a SIEM over syslog/UDP "
+                         "(default port 514)")
+    ap.add_argument("--syslog-format", default="cef", choices=("cef", "json"),
+                    dest="syslog_format",
+                    help="wire format for --syslog (default cef)")
     ap.add_argument("--log-max-mb", type=int, default=32, dest="log_max_mb",
                     help="rotate the alert log past this size, 0 = never "
                          "(default 32)")
@@ -435,7 +516,11 @@ def main():
     args = ap.parse_args()
 
     det = Detector(args.model, args.meta)
-    alog = AlertLog(args.log, max_bytes=args.log_max_mb * 1024 * 1024)
+    sinks = []
+    if args.syslog:
+        sinks.append(SyslogSink(args.syslog, fmt=args.syslog_format))
+        print(CYA(f"[SIEM] {sinks[0].status()}"))
+    alog = AlertLog(args.log, max_bytes=args.log_max_mb * 1024 * 1024, sinks=sinks)
 
     responder = None
     if args.ips or args.prevent:
@@ -463,6 +548,8 @@ def main():
                      responder=responder)
     finally:
         alog.close()
+        for sink in sinks:
+            print(DIM(f"[SIEM] {sink.status()}"))
 
 
 if __name__ == "__main__":

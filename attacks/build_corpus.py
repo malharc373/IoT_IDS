@@ -182,7 +182,13 @@ def build(scenarios: int, out_dir: str, pcap_dir: str, mix_background: bool = Tr
 
 def _build_demo_mixed(pcap_dir: str):
     """A single capture that mixes benign traffic with each attack, for a
-    realistic 'detect the needle in the haystack' demo."""
+    realistic 'detect the needle in the haystack' demo.
+
+    Creates pcap_dir itself: data/pcaps/ is gitignored, so on a fresh clone it
+    does not exist and run_demo.sh -- which calls this directly, bypassing
+    build() -- died with FileNotFoundError.
+    """
+    os.makedirs(pcap_dir, exist_ok=True)
     pkts = []
     # Distinct seeds per stream so each attacker/host gets its own IPs — mixing
     # the same seed collides source IPs and corrupts host-context features.

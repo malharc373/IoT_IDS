@@ -18,8 +18,9 @@ network attacks in real time on cheap hardware*:
    TON-IoT, Bot-IoT, CIC-IoT-2023, CICDDoS2019, IoTID20, X-IIoTID,
    MQTT-IoT-IDS2020, WUSTL-IIoT) aligned into one 12-feature space to measure —
    not assert — how well flow behaviour transfers across labs/devices/tools. The
-   honest finding: **in-domain F1 0.98 vs cross-domain 0.45** (a 0.53 gap); a
-   deployable log+quantile transform lifts transfer to ~0.59 but does not close
+   honest finding: **in-domain ROC-AUC 0.996 vs cross-domain 0.514** against a
+   chance baseline of 0.500, with MCC −0.002 — between arbitrary dataset pairs a
+   supervised detector transfers *at chance*. No fixed feature transform closes
    it. This *is* the overfitting problem, quantified. See
    [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
@@ -137,20 +138,29 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 ### Cross-dataset generalization (the honest real-world number)
 
 Ten datasets aligned to the 12-feature space, trained on one and tested on
-*others* (no leaky merged split — `code/cross_dataset_eval.py`):
+*others* (no leaky merged split — `code/cross_dataset_eval.py`). Reported with
+ROC-AUC and MCC rather than F1, because each test set is ~50/50 balanced and a
+classifier that answers "attack" to everything scores F1 = 0.667:
 
-| | Binary F1 |
-|---|---|
-| In-domain (train = test dataset) | **0.978** |
-| Cross-domain (train ≠ test) | **0.450** |
-| Generalisation gap | **0.528** |
+| metric | in-domain | cross-domain | chance |
+|---|---|---|---|
+| **ROC-AUC** | **0.996** | **0.514** | 0.500 |
+| **MCC** | **0.959** | **−0.002** | 0.000 |
+| Balanced accuracy | 0.979 | 0.496 | 0.500 |
+| Binary F1 | 0.979 | 0.440 | 2p/(1+p) |
 
-A CICIDS-only model scores 0.98 in-domain but **0.00–0.08** on every other
-dataset — it memorises artifacts, not attack behaviour. A deployable
-log+quantile feature transform lifts leave-one-dataset-out transfer from 0.54 to
-0.59, but the ~0.59 ceiling vs 0.98 in-domain shows a fixed transform does **not**
-close the gap — genuine domain adaptation is the open problem. Full study +
-heatmap in [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
+80% of the 90 ordered dataset pairs score at or below the trivial all-attack
+baseline, and 56% sit at ROC-AUC ≤ 0.55. A CICIDS-only model scores 0.98
+in-domain and collapses everywhere else — it memorises artifacts, not attack
+behaviour. **No fixed feature transform helps**: all seven tested land between
+AUC 0.46 and 0.57 (`code/transfer_experiment.py`), so genuine domain adaptation
+is the open problem.
+
+One exception is worth the whole study: pooled-trained, held out on CICDDoS2019,
+the model reaches **AUC 0.927 but F1 0.561** — the ranking transfers almost
+perfectly and only the decision threshold fails. A small labelled calibration
+sample from the target domain would recover most of that. Full study + heatmaps
+in [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
 ### System benchmark (Apple M4; `python demo/benchmark.py`)
 

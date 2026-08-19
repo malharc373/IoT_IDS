@@ -305,51 +305,125 @@ def t_c_export():
 
 
 def t_dashboard():
-    import importlib.util, urllib.request, threading, time
+    import importlib.util, urllib.request, urllib.error, threading, json as _json
     from http.server import ThreadingHTTPServer
     spec = importlib.util.spec_from_file_location("dash", os.path.join(ROOT, "src", "dashboard.py"))
     dash = importlib.util.module_from_spec(spec); spec.loader.exec_module(dash)
-    # write a couple of alert records and aggregate them
     logp = os.path.join(TMP, "alerts.jsonl")
     with open(logp, "w") as f:
-        f.write(json.dumps({"ts": "2026-08-03T10:00:00", "src_ip": "203.0.113.1",
-                            "kind": "portscan", "flows": 500, "confidence": 1.0}) + "\n")
-        f.write(json.dumps({"ts": "2026-08-03T10:00:01", "src_ip": "203.0.113.2",
-                            "kind": "synflood", "flows": 900, "confidence": 1.0}) + "\n")
+        f.write(_json.dumps({"ts": "2026-08-03T10:00:00", "src_ip": "203.0.113.1",
+                             "kind": "portscan", "flows": 500, "confidence": 1.0}) + "\n")
+        f.write(_json.dumps({"ts": "2026-08-03T10:00:01", "src_ip": "203.0.113.2",
+                             "kind": "synflood", "flows": 900, "confidence": 1.0}) + "\n")
     st = dash.build_state(logp)
     assert st["totals"]["incidents"] == 2 and st["totals"]["sources"] == 2
     assert {d["type"] for d in st["by_type"]} == {"portscan", "synflood"}
-    # serve it and fetch both endpoints
-    dash.Handler.log_path = logp
+
+    dash.Handler.feed = dash.AlertFeed(logp)
+    dash.Handler.token = None
     srv = ThreadingHTTPServer(("127.0.0.1", 0), dash.Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     port = srv.server_address[1]
     try:
         page = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=3).read()
         api = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=3).read()
-        assert b"IoT-IDS" in page and json.loads(api)["totals"]["incidents"] == 2
+        assert b"IoT-IDS" in page and _json.loads(api)["totals"]["incidents"] == 2
     finally:
         srv.shutdown()
 
 
-def t_multidataset_taxonomy():
-    # taxonomy normalization is data-free and must be stable
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("mds", os.path.join(ROOT, "code", "multidataset.py"))
-    mds = importlib.util.module_from_spec(spec); spec.loader.exec_module(mds)
-    assert mds.to_category("BENIGN") == "benign"
-    assert mds.to_category("Mirai-UDP Flooding") == "botnet"
-    assert mds.to_category("DrDoS_DNS") == "dos"
-    assert mds.to_category("Port Scan") == "recon"
-    assert mds.to_category("SSH-Patator") == "bruteforce"
-    assert mds.to_category("MITM ARP Spoofing") == "spoofing"
-    assert len(mds.UNIFIED_FEATURES) == 12
-    # if the datasets happen to be present, one loader must align to 12 features
-    present = mds.available()
-    if present:
-        df = mds.load(present[0])
-        assert list(df.columns[:12]) == mds.UNIFIED_FEATURES
-        assert set(df["y"].unique()) <= {0, 1}
+def t_dashboard_auth_and_binding():
+    """Alert feed is not served to a network unauthenticated (F10)."""
+    import importlib.util, urllib.request, urllib.error, threading, subprocess
+    from http.server import ThreadingHTTPServer
+    spec = importlib.util.spec_from_file_location("dash2", os.path.join(ROOT, "src", "dashboard.py"))
+    dash = importlib.util.module_from_spec(spec); spec.loader.exec_module(dash)
+
+    assert dash._is_loopback("127.0.0.1") and dash._is_loopback("localhost")
+    assert not dash._is_loopback("0.0.0.0") and not dash._is_loopback("192.168.1.5")
+
+    # binding off-loopback without auth must refuse to start
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "src", "dashboard.py"),
+                        "--host", "0.0.0.0", "--port", "0"],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode != 0 and "refusing to serve" in r.stderr, r.stderr[:400]
+
+    # with a token, every request must carry it
+    dash.Handler.feed = dash.AlertFeed(os.path.join(TMP, "auth.jsonl"))
+    dash.Handler.token = "s3cret-token"
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), dash.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    try:
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=3)
+            raise AssertionError("served without a token")
+        except urllib.error.HTTPError as e:
+            assert e.code == 401
+        ok = urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/api/state?token=s3cret-token", timeout=3)
+        assert ok.status == 200
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/state",
+                                     headers={"X-Auth-Token": "s3cret-token"})
+        assert urllib.request.urlopen(req, timeout=3).status == 200
+    finally:
+        srv.shutdown()
+        dash.Handler.token = None
+
+
+def t_dashboard_incremental_and_rotation():
+    """Only appended bytes are parsed; rotation is detected (F10)."""
+    import importlib.util, json as _json
+    spec = importlib.util.spec_from_file_location("dash3", os.path.join(ROOT, "src", "dashboard.py"))
+    dash = importlib.util.module_from_spec(spec); spec.loader.exec_module(dash)
+    p = os.path.join(TMP, "inc.jsonl")
+
+    def rec(i):
+        return _json.dumps({"ts": "2026-08-03T10:00:00", "src_ip": f"10.0.0.{i}",
+                            "kind": "portscan", "flows": i}) + "\n"
+
+    with open(p, "w") as f:
+        f.writelines(rec(i) for i in range(1, 4))
+    feed = dash.AlertFeed(p)
+    feed.refresh(); assert len(feed.snapshot()) == 3
+    pos = feed._pos
+    feed.refresh(); assert feed._pos == pos, "re-read a file that had not grown"
+
+    with open(p, "a") as f:
+        f.write(rec(4))
+    feed.refresh(); assert len(feed.snapshot()) == 4
+
+    # a half-written line is held back until it completes
+    with open(p, "a") as f:
+        f.write('{"ts": "2026-08-03T10:00:0')
+    feed.refresh(); assert len(feed.snapshot()) == 4, "parsed a partial line"
+    with open(p, "a") as f:
+        f.write('0", "src_ip": "10.0.0.5", "kind": "synflood", "flows": 5}\n')
+    feed.refresh(); assert len(feed.snapshot()) == 5
+
+    # rotation: file replaced by a smaller one -> clean re-read, no stale offset
+    os.replace(p, p + ".1")
+    with open(p, "w") as f:
+        f.write(rec(9))
+    feed.refresh()
+    snap = feed.snapshot()
+    assert len(snap) == 1 and snap[0]["src_ip"] == "10.0.0.9", snap
+
+
+def t_alert_log_rotation():
+    """AlertLog bounds the feed rather than growing forever (F10)."""
+    from ids_daemon import AlertLog
+    p = os.path.join(TMP, "rot", "alerts.jsonl")
+    alog = AlertLog(p, max_bytes=2048, backups=2)
+    inc = {"src_ip": "203.0.113.1", "kind": "portscan", "proto": 6, "flows": 1,
+           "pkts": 10, "bytes": 640, "n_dst_ips": 1, "n_dst_ports": 1,
+           "avg_conf": 1.0}
+    for _ in range(200):
+        alog.emit(dict(inc))
+    alog.close()
+    assert os.path.getsize(p) < 2048 * 2, "current log exceeded the rotation bound"
+    assert os.path.exists(p + ".1"), "no rotated backup was produced"
+    assert not os.path.exists(p + ".3"), "kept more backups than configured"
 
 
 def t_alignment_contract():
@@ -588,6 +662,9 @@ def main():
         ("multidataset taxonomy", t_multidataset_taxonomy),
         ("trivial-baseline guard", t_trivial_baseline),
         ("web dashboard", t_dashboard),
+        ("dashboard auth + binding", t_dashboard_auth_and_binding),
+        ("dashboard incremental reads", t_dashboard_incremental_and_rotation),
+        ("alert log rotation", t_alert_log_rotation),
         ("detector classify known", t_detector_classify_known),
         ("daemon offline mode", t_daemon_offline),
         ("daemon replay mode", t_daemon_replay),

@@ -68,8 +68,13 @@ Live **web dashboard** (reads the alert feed; stdlib-only, Pi-friendly):
 
 ```bash
 python src/ids_daemon.py --replay data/pcaps/demo_mixed.pcap --ips   # writes alerts
-python src/dashboard.py                                              # http://localhost:8080
+python src/dashboard.py                                              # http://127.0.0.1:8080
 ```
+
+It binds loopback by default. The page exposes attacking hosts, blocked hosts
+and the segment's addressing, so serving it to a network needs a token
+(`--token generate`) or an explicit `--insecure`; over an untrusted network
+prefer `ssh -L 8080:127.0.0.1:8080 pi@<host>`.
 
 Compile the model for a microcontroller:
 

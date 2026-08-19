@@ -170,12 +170,38 @@ def fmt_incident(a):
 
 
 class AlertLog:
-    def __init__(self, path):
+    """Append-only JSONL alert feed with size-based rotation.
+
+    The feed had no bound: a long-running sensor grew logs/alerts.jsonl
+    forever, and the dashboard re-parsed the whole thing on every 2 s poll from
+    every client (vault/Findings/F10). Rotation keeps both costs bounded, and
+    the dashboard detects the rotation and re-reads cleanly.
+    """
+
+    def __init__(self, path, max_bytes=32 * 1024 * 1024, backups=3):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.path = path
+        self.max_bytes = max_bytes
+        self.backups = backups
         self.fh = open(path, "a")
         self.n = 0
         self.by_kind = collections.Counter()
+
+    def _rotate_if_needed(self):
+        if self.max_bytes <= 0:
+            return
+        try:
+            if self.fh.tell() < self.max_bytes:
+                return
+        except Exception:
+            return
+        self.fh.close()
+        for i in range(self.backups - 1, 0, -1):
+            src, dst = f"{self.path}.{i}", f"{self.path}.{i+1}"
+            if os.path.exists(src):
+                os.replace(src, dst)
+        os.replace(self.path, f"{self.path}.1")
+        self.fh = open(self.path, "a")
 
     def emit(self, a):
         self.n += 1
@@ -186,6 +212,7 @@ class AlertLog:
                "dst_ips": a["n_dst_ips"], "dst_ports": a["n_dst_ports"],
                "confidence": round(a["avg_conf"], 4)}
         self.fh.write(json.dumps(rec) + "\n"); self.fh.flush()
+        self._rotate_if_needed()
 
     def close(self):
         self.fh.close()
@@ -371,6 +398,9 @@ def main():
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--meta", default=DEFAULT_META)
     ap.add_argument("--log", default=os.path.join(ROOT, "logs", "alerts.jsonl"))
+    ap.add_argument("--log-max-mb", type=int, default=32, dest="log_max_mb",
+                    help="rotate the alert log past this size, 0 = never "
+                         "(default 32)")
     ap.add_argument("--csv", default=None, help="offline: write per-flow CSV")
     ap.add_argument("--window", type=float, default=60.0)
     ap.add_argument("--step", type=float, default=1.0, help="replay/live flush interval")
@@ -405,7 +435,7 @@ def main():
     args = ap.parse_args()
 
     det = Detector(args.model, args.meta)
-    alog = AlertLog(args.log)
+    alog = AlertLog(args.log, max_bytes=args.log_max_mb * 1024 * 1024)
 
     responder = None
     if args.ips or args.prevent:

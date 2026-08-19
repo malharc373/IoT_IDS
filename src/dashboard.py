@@ -16,14 +16,42 @@ Pi alongside the sensor.
 For a no-hardware preview, feed it a demo run first:
     python src/ids_daemon.py --pcap data/pcaps/demo_mixed.pcap --ips
     python src/dashboard.py
+
+
+BINDING AND AUTH  (see vault/Findings/F10)
+-------------------------------------------
+This page exposes the full alert feed: which hosts are attacking, which are
+being blocked, and the internal addressing of the monitored segment. That is
+reconnaissance material, so it is not served to a network by accident.
+
+  * default bind is 127.0.0.1 (was 0.0.0.0)
+  * binding to a non-loopback address REQUIRES --token (or the
+    IOTIDS_DASHBOARD_TOKEN env var), or an explicit --insecure acknowledgement
+  * with a token set, every request must carry ?token=... or an
+    X-Auth-Token header
+
+There is no TLS here — it is a stdlib http.server. Over an untrusted network,
+prefer an SSH tunnel:  ssh -L 8080:127.0.0.1:8080 pi@<host>
+
+
+INCREMENTAL READS
+-----------------
+build_state() used to readlines() the whole alert log on every request, from
+every client, every 2 seconds. The log has no size bound, so cost grew without
+limit. State is now cached and only appended bytes are parsed; truncation or
+rotation is detected and triggers a clean re-read.
 """
 from __future__ import annotations
 
 import os
-import io
+import sys
 import json
 import time
+import hmac
+import secrets
 import argparse
+import threading
+import ipaddress
 import datetime as dt
 import collections
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -49,17 +77,79 @@ def _categories():
         return {}
 
 
-def build_state(log_path):
-    cats = _categories()
-    records = []
-    if os.path.exists(log_path):
-        with open(log_path) as f:
-            lines = f.readlines()[-5000:]
-        for ln in lines:
+class AlertFeed:
+    """Incrementally-parsed view of the alert log.
+
+    Keeps a rolling deque of recent records and only reads bytes appended since
+    the last poll. Detects truncation/rotation (file shrank or the inode
+    changed) and re-reads from the start.
+    """
+
+    MAX_RECORDS = 5000
+
+    def __init__(self, path, max_records=None):
+        self.path = path
+        self.max_records = max_records or self.MAX_RECORDS
+        self.records = collections.deque(maxlen=self.max_records)
+        self._pos = 0
+        self._ino = None
+        self._lock = threading.Lock()
+        self._partial = ""
+
+    def _reset(self):
+        self.records.clear()
+        self._pos = 0
+        self._partial = ""
+
+    def refresh(self):
+        """Read whatever is new. Cheap enough to call on every request."""
+        with self._lock:
             try:
-                records.append(json.loads(ln))
-            except Exception:
-                pass
+                stat = os.stat(self.path)
+            except FileNotFoundError:
+                self._reset()
+                self._ino = None
+                return
+            # rotated (new inode) or truncated (smaller than our offset)
+            if self._ino is not None and (stat.st_ino != self._ino
+                                          or stat.st_size < self._pos):
+                self._reset()
+            self._ino = stat.st_ino
+            if stat.st_size == self._pos:
+                return
+            with open(self.path, "r") as f:
+                f.seek(self._pos)
+                chunk = f.read()
+                self._pos = f.tell()
+            data = self._partial + chunk
+            # a writer may be mid-line; hold the tail back until it completes
+            if data and not data.endswith("\n"):
+                data, _, self._partial = data.rpartition("\n")
+            else:
+                self._partial = ""
+            for ln in data.splitlines():
+                if not ln.strip():
+                    continue
+                try:
+                    self.records.append(json.loads(ln))
+                except Exception:
+                    pass
+
+    def snapshot(self):
+        with self._lock:
+            return list(self.records)
+
+
+def build_state(feed):
+    """Aggregate the feed into the shape the page renders.
+
+    Accepts an AlertFeed, or a path (for callers and tests that pass one).
+    """
+    if isinstance(feed, str):
+        feed = AlertFeed(feed)
+    feed.refresh()
+    records = feed.snapshot()
+    cats = _categories()
 
     # dedupe to unique incidents keyed by (src_ip, kind): keep the largest/last
     incidents = {}
@@ -92,15 +182,19 @@ def build_state(log_path):
             pass
     timeline = [{"t": k, "count": v} for k, v in sorted(buckets.items())][-30:]
 
-    # active IPS blocks
-    blocks = []
+    # active IPS blocks and throttles
+    blocks, throttles = [], []
     if os.path.exists(IPS_STATE):
         try:
             now = time.time()
-            for ip, v in json.load(open(IPS_STATE)).items():
-                if v.get("until", 0) > now:
-                    blocks.append({"ip": ip, "kind": v.get("kind", "?"),
-                                   "expires_in": int(v["until"] - now)})
+            raw = json.load(open(IPS_STATE))
+            for bucket, out in (("active", blocks), ("throttled", throttles)):
+                # tolerate the pre-2026-08 flat format
+                items = raw.get(bucket, raw if bucket == "active" else {})
+                for ip, v in items.items():
+                    if isinstance(v, dict) and v.get("until", 0) > now:
+                        out.append({"ip": ip, "kind": v.get("kind", "?"),
+                                    "expires_in": int(v["until"] - now)})
         except Exception:
             pass
 
@@ -114,6 +208,7 @@ def build_state(log_path):
             "incidents": len(inc),
             "sources": len(by_src),
             "active_blocks": len(blocks),
+            "active_throttles": len(throttles),
             "top_attack": (by_type.most_common(1)[0][0] if by_type else "—"),
         },
         "by_type": [{"type": k, "category": cats.get(k, "attack"), "count": c}
@@ -123,6 +218,7 @@ def build_state(log_path):
                         for s, c in by_src.most_common(8)],
         "recent": recent,
         "blocks": sorted(blocks, key=lambda b: b["expires_in"]),
+        "throttles": sorted(throttles, key=lambda b: b["expires_in"]),
         "timeline": timeline,
         "colors": CATEGORY_COLORS,
     }
@@ -235,19 +331,41 @@ tick();setInterval(tick,2000);
 
 class Handler(BaseHTTPRequestHandler):
     log_path = DEFAULT_LOG
+    feed = None
+    token = None
 
     def _send(self, code, body, ctype):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # this page renders only its own inlined CSS/JS and talks to itself
+        self.send_header("Content-Security-Policy",
+                         "default-src 'none'; style-src 'unsafe-inline'; "
+                         "script-src 'unsafe-inline'; connect-src 'self'")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
         self.end_headers()
         self.wfile.write(body)
 
+    def _authorized(self):
+        if not self.token:
+            return True
+        supplied = self.headers.get("X-Auth-Token", "")
+        if not supplied and "?" in self.path:
+            from urllib.parse import urlparse, parse_qs
+            supplied = parse_qs(urlparse(self.path).query).get("token", [""])[0]
+        # constant-time compare so the token can't be recovered by timing
+        return hmac.compare_digest(supplied, self.token)
+
     def do_GET(self):
-        if self.path.startswith("/api/state"):
-            body = json.dumps(build_state(self.log_path)).encode()
+        if not self._authorized():
+            self._send(401, b"unauthorized", "text/plain")
+            return
+        path = self.path.split("?", 1)[0]
+        if path == "/api/state":
+            body = json.dumps(build_state(self.feed)).encode()
             self._send(200, body, "application/json")
-        elif self.path in ("/", "/index.html"):
+        elif path in ("/", "/index.html"):
             self._send(200, PAGE.encode(), "text/html; charset=utf-8")
         else:
             self._send(404, b"not found", "text/plain")
@@ -256,16 +374,59 @@ class Handler(BaseHTTPRequestHandler):
         pass   # quiet
 
 
+def _is_loopback(host):
+    if host in ("", "0.0.0.0", "::"):
+        return False
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host == "localhost"
+
+
 def main():
     ap = argparse.ArgumentParser(description="IoT-IDS live web dashboard")
-    ap.add_argument("--port", type=int, default=8080)
-    ap.add_argument("--host", default="0.0.0.0")
+    ap.add_argument("--port", type=int,
+                    default=int(os.environ.get("IOTIDS_DASHBOARD_PORT", 8080)))
+    ap.add_argument("--host", default="127.0.0.1",
+                    help="bind address (default 127.0.0.1 — loopback only)")
     ap.add_argument("--log", default=DEFAULT_LOG)
+    ap.add_argument("--token", default=os.environ.get("IOTIDS_DASHBOARD_TOKEN"),
+                    help="require this token on every request "
+                         "(?token=... or X-Auth-Token). Use 'generate' to mint one.")
+    ap.add_argument("--insecure", action="store_true",
+                    help="acknowledge serving the alert feed to a network with "
+                         "no authentication")
     args = ap.parse_args()
+
+    token = args.token
+    if token == "generate":
+        token = secrets.token_urlsafe(24)
+
+    if not _is_loopback(args.host) and not token and not args.insecure:
+        sys.exit(
+            f"[ERROR] refusing to serve the alert feed on {args.host} without auth.\n"
+            f"        The dashboard exposes attacking hosts, blocked hosts and the\n"
+            f"        addressing of the monitored segment.\n"
+            f"        Pick one:\n"
+            f"          --token generate      mint a token and print the URL\n"
+            f"          --token <secret>      use your own\n"
+            f"          --host 127.0.0.1      keep it local, reach it over an SSH tunnel:\n"
+            f"                                  ssh -L {args.port}:127.0.0.1:{args.port} pi@<host>\n"
+            f"          --insecure            you have read the above and accept it")
+
     Handler.log_path = args.log
+    Handler.feed = AlertFeed(args.log)
+    Handler.token = token
     srv = ThreadingHTTPServer((args.host, args.port), Handler)
     shown = "localhost" if args.host in ("0.0.0.0", "") else args.host
-    print(f"IoT-IDS dashboard → http://{shown}:{args.port}  (reading {args.log})")
+    url = f"http://{shown}:{args.port}"
+    if token:
+        url += f"/?token={token}"
+    print(f"IoT-IDS dashboard → {url}  (reading {args.log})")
+    if token:
+        print(f"  auth: token required on every request")
+    elif not _is_loopback(args.host):
+        print("  auth: NONE — serving the alert feed to the network (--insecure)")
     print("Ctrl-C to stop")
     try:
         srv.serve_forever()

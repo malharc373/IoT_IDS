@@ -15,6 +15,18 @@ set -euo pipefail
 
 IFACE="${1:-eth0}"
 DASH_PORT="${2:-8080}"
+# The dashboard exposes the alert feed (attacking hosts, blocked hosts, segment
+# addressing), so reaching it over the LAN requires a token. Reuse the existing
+# one across re-runs so bookmarked URLs keep working.
+TOKEN_FILE="$(cd "$(dirname "$0")/.." && pwd)/logs/dashboard.token"
+mkdir -p "$(dirname "$TOKEN_FILE")"
+if [ -s "$TOKEN_FILE" ]; then
+    DASH_TOKEN="$(cat "$TOKEN_FILE")"
+else
+    DASH_TOKEN="$(head -c 18 /dev/urandom | base64 | tr -d '/+=' )"
+    printf '%s' "$DASH_TOKEN" > "$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
+fi
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RUN_USER="${SUDO_USER:-$(whoami)}"
 VENV="$REPO_DIR/.venv"
@@ -82,7 +94,8 @@ Wants=network-online.target
 Type=simple
 User=$RUN_USER
 WorkingDirectory=$REPO_DIR
-ExecStart=$PY $REPO_DIR/src/dashboard.py --port $DASH_PORT --log $REPO_DIR/logs/alerts.jsonl
+Environment=IOTIDS_DASHBOARD_TOKEN=$DASH_TOKEN
+ExecStart=$PY $REPO_DIR/src/dashboard.py --host 0.0.0.0 --port $DASH_PORT --log $REPO_DIR/logs/alerts.jsonl
 Restart=on-failure
 RestartSec=3
 StandardOutput=journal
@@ -101,7 +114,10 @@ IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}')"; IP_ADDR="${IP_ADDR:-<pi
 echo
 echo "=== Done ==="
 echo "Start both :  sudo systemctl start iot-ids iot-ids-dashboard"
-echo "Dashboard  :  http://$IP_ADDR:$DASH_PORT"
+echo "Dashboard  :  http://$IP_ADDR:$DASH_PORT/?token=$DASH_TOKEN"
+echo "             (token stored at $TOKEN_FILE, mode 600)"
+echo "             for no token at all, tunnel instead:"
+echo "               ssh -L $DASH_PORT:127.0.0.1:$DASH_PORT $RUN_USER@$IP_ADDR"
 echo "Sensor logs:  journalctl -u iot-ids -f"
 echo "Dash logs  :  journalctl -u iot-ids-dashboard -f"
 echo "Alerts     :  tail -f $REPO_DIR/logs/alerts.jsonl"

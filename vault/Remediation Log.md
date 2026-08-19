@@ -32,8 +32,9 @@ Work done against [[Review 2026-08-19]], in order. Branch
 | F16 | [[F16 - Moderate issues roundup]] | moderate | fixed |
 | F17 | [[F17 - Documentation inconsistencies]] | moderate | fixed |
 | F18 | [[F18 - Pipeline ONNX export silently ships a broken model]] | critical | fixed — *found during remediation* |
+| F19 | [[F19 - IoT-23 labels parsed as all-benign]] | critical | fixed — *found during remediation* |
 
-Test suite: **23 passed / 1 failed** before → **37 passed / 0 failed** after.
+Test suite: **23 passed / 1 failed** before → **40 passed / 0 failed** after.
 
 ## Commits
 
@@ -78,12 +79,28 @@ Worth stating plainly, because the value is in the measurement either way:
 
 Both are now permanent measurements in the trainer rather than open questions.
 
-### One new critical finding surfaced during the work
+### Beyond the review: Future Work items completed
+
+With the findings closed, several roadmap items were done in the same pass —
+the SFAF scaler removed for the same reason as F18, pytest + a GitHub Actions
+workflow, the inline-bridge deployment guide that `--ips-scope network` needed,
+a pcapng reader (the old one *mis-parsed* pcapng rather than rejecting it), and
+syslog/CEF export so the sensor can reach a SIEM.
+
+Extracting the IoT-23 archive to complete the eleven-dataset study then exposed
+[[F19 - IoT-23 labels parsed as all-benign]] — a loader that had never been run
+against real data.
+
+### Two new critical findings surfaced during the work
 
 [[F18 - Pipeline ONNX export silently ships a broken model]] — the retrain
 exposed an ONNX export that produced an internally-consistent 16.6%-accurate
 stand-in for a 99.99% model. Found only because the parity check printed a
 number; it now aborts and deletes the artifact instead.
+
+[[F19 - IoT-23 labels parsed as all-benign]] — a `df.get(col, default)` turned a
+structural parse failure into a plausible dataset: the entire CTU malware corpus
+read as 0.0% attack, with no exception and no warning.
 
 ### The end-to-end run caught what the tests did not
 

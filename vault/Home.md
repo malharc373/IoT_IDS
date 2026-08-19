@@ -52,6 +52,7 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 
 ### Found during remediation
 - [[F18 - Pipeline ONNX export silently ships a broken model]]
+- [[F19 - IoT-23 labels parsed as all-benign]]
 
 ## Experiments
 
@@ -67,7 +68,7 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 
 ## Current state
 
-- 18 findings: 17 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
-- Test suite **37 passed / 0 failed** (was 23/1 before the review)
+- 19 findings: 18 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
+- Test suite **40 passed / 0 failed** (was 23/1 before the review)
 - Headline research number corrected: cross-domain **ROC-AUC 0.514** against a
   chance baseline of 0.500 — see [[EXP02 - Corrected alignment rerun]]

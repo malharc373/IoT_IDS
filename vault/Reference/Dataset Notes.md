@@ -96,12 +96,26 @@ signal that it is Zeek's limitation, not the alignment's. Those slots are
   [[Future Work]].
 
 ### IoT-23
-- Zeek `conn.log.labeled` files; needs `iot_23_datasets_small.tar.gz`
-  extracted under `Datasets/IoT23`. **Not currently extracted**, so the study
-  runs on ten of eleven.
-- The only source of *real IoT malware* captures, and it ships raw pcaps —
-  which makes it the natural target for validating the live 22-feature model on
-  real traffic.
+- Zeek `conn.log.labeled` files from `iot_23_datasets_small.tar.gz`, extracted
+  under `Datasets/IoT23`. **Extracted 2026-08-20**; the study now runs on all
+  eleven.
+- **Two traps, both fixed in [[F19 - IoT-23 labels parsed as all-benign]]:**
+  - The final `tunnel_parents / label / detailed-label` triple is separated by
+    **spaces**, not tabs — in the `#fields` header *and* the data rows. Split on
+    tabs alone and there is no `label` column, so the loader's benign default
+    labelled the entire malware corpus as clean.
+  - ~27 GB extracted, one file **10 GB alone**. `pd.read_csv` on that
+    materialises tens of GB. Now byte-scan row count → chunked parse → sample
+    at the corresponding fraction, with only the needed columns parsed.
+- Sampled frames are cached at `Datasets/IoT23/_sampled_<n>.parquet` and reused
+  while newer than every source file — a full pass is tens of minutes of I/O.
+- Detailed-label vocabulary (by frequency): `PartOfAHorizontalPortScan`,
+  `-` (benign), `DDoS`, `C&C`, `Attack`, `C&C-Torii`. Plain `C&C` had no
+  taxonomy entry and fell through to `other_attack`; `c&c` is now a botnet key.
+- The only source of *real IoT malware* captures. The "small" archive ships
+  only Zeek logs, **not pcaps** — so it feeds the 12-feature SFAF study but
+  cannot yet validate the live 22-feature model. Getting the pcap variant is
+  what [[Future Work]] item 1 needs.
 
 ## Deliberately excluded
 

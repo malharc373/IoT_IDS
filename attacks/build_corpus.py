@@ -100,8 +100,11 @@ def _mixed_scenario(kind, seed, bg_seed):
 
     rows = []
     # extract_live gives us the flow key alongside meta/vector so each flow can
-    # be attributed to the packet set that produced it
-    for key, _meta, vec, _ in table.extract_live(min_pkts=1, window=None):
+    # be attributed to the packet set that produced it. Its key is
+    # (5-tuple, generation) — a tuple reused after a TCP teardown yields a
+    # second record — so compare on the 5-tuple half.
+    for uk, _meta, vec, _ in table.extract_live(min_pkts=1, window=None):
+        key = uk[0]
         if key in ambiguous:
             continue
         if key in atk_keys:

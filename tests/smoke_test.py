@@ -130,7 +130,7 @@ def t_tcp_teardown_splits_flows():
         sp, dp = (sport, 80) if fwd else (80, sport)
         return ff.parse_raw(bytes(Ether()/IP(src=a, dst=b)/TCP(sport=sp, dport=dp, flags=flags)))
 
-    # RST closes the flow
+    # RST closes the flow; a later SYN on the same tuple starts a new one
     t = ff.FlowTable()
     t.add_packet(pkt("S"), 1.0)
     t.add_packet(pkt("R", fwd=False), 1.1)
@@ -146,6 +146,20 @@ def t_tcp_teardown_splits_flows():
     t.add_packet(pkt("FA", fwd=False), 2.2)
     t.add_packet(pkt("S"), 60.0)
     assert len(t.extract(window=None)) == 2, "bidirectional FIN did not close the flow"
+
+    # the trailing ACK of a FIN/FIN exchange belongs to the flow that closed,
+    # not to a new one-packet flow
+    t = ff.FlowTable()
+    t.add_packet(pkt("S"), 1.0)
+    t.add_packet(pkt("SA", fwd=False), 1.01)
+    t.add_packet(pkt("A"), 1.02)
+    t.add_packet(pkt("PA"), 1.1)
+    t.add_packet(pkt("FA"), 2.0)
+    t.add_packet(pkt("FA", fwd=False), 2.1)
+    t.add_packet(pkt("A"), 2.2)                       # final ACK of the teardown
+    rows = t.extract(window=None)
+    assert len(rows) == 1, f"trailing ACK opened a spurious flow ({len(rows)} flows)"
+    assert rows[0][0]["pkts"] == 7
 
     # a plain long-lived flow is still one record
     t = ff.FlowTable()

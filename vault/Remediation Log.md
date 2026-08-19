@@ -85,6 +85,17 @@ exposed an ONNX export that produced an internally-consistent 16.6%-accurate
 stand-in for a 99.99% model. Found only because the parity check printed a
 number; it now aborts and deletes the artifact instead.
 
+### The end-to-end run caught what the tests did not
+
+The TCP-teardown fix passed all 36 tests and broke the pipeline twice: the
+trailing ACK of a FIN/FIN exchange opened spurious one-packet flows (benign
+recall 1.00 → 0.66), and `build_corpus` compared bare 5-tuples against the new
+`(5-tuple, generation)` keys, silently collapsing the corpus from 153k flows to
+3k. Both surfaced only from running `demo/run_demo.sh` and reading the numbers.
+
+Unit tests assert the property you thought to check. Running the whole thing and
+looking at the output is what catches the property you did not.
+
 ## The through-line
 
 Three of the five critical findings (F03, F18, and F05's timestamp half) are the

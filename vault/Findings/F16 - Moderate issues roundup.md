@@ -59,6 +59,24 @@ directions. `FlowTable` keeps a `(5-tuple, generation)` key so a later packet
 on a closed tuple starts a distinct record. A one-sided FIN does not close the
 flow, and a long-lived flow with no teardown remains one record.
 
+> [!warning] The first version of this rule was wrong, and the demo caught it.
+> Closing on both FINs and immediately reusing the tuple meant the **trailing
+> ACK** that completes a FIN/FIN exchange opened a spurious one-packet flow.
+> Benign recall on held-out validation fell from 1.00 to **0.66**: those
+> stragglers read as neither a benign session nor an attack.
+>
+> A torn-down tuple now stays attached to the finished flow until something
+> that actually looks like a new connection arrives — a SYN without ACK, or a
+> quiet gap of `TCP_REUSE_GAP_S = 5.0` (which covers UDP and ICMP, where there
+> is no handshake to look for). Benign recall is back to 1.00 and a regression
+> test asserts that a full open/data/FIN-FIN/ACK exchange is exactly one flow
+> of seven packets.
+>
+> A second bug from the same change: `build_corpus._keys_of` built bare 5-tuple
+> keys while `extract_live` now returns `(5-tuple, generation)`, so the corpus
+> labelling matched nothing and silently collapsed from 153k flows to 3k. Also
+> caught by re-running the pipeline end to end rather than trusting the tests.
+
 ## 4. Five dead scripts
 
 `code/live_inference.py`, `code/04_live_inference.py`,

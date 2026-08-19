@@ -71,7 +71,7 @@
     "binary_f1_attack": 0.9999
   },
   "cap_per_class": 8000,
-  "n_train": 49444,
+  "n_train": 49445,
   "n_test": 10405,
   "split": "GroupShuffleSplit on scenario (no scenario spans the split)",
   "n_train_scenarios": 336,

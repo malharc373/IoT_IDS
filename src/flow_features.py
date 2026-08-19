@@ -53,6 +53,11 @@ URG = 0x20
 # Rolling window (seconds) used for host-context features.
 HOST_WINDOW_S = 60.0
 
+# After a TCP teardown the 5-tuple stays attached to the finished flow for this
+# long, so the trailing ACK of a FIN/FIN exchange lands where it belongs instead
+# of opening a spurious one-packet flow. A SYN reuses the tuple immediately.
+TCP_REUSE_GAP_S = 5.0
+
 # ── Feature vector definition (ORDER MATTERS — do not reorder) ────────────────
 FEATURE_NAMES: List[str] = [
     "proto",                # 6 TCP / 17 UDP / 1 ICMP / 0 other
@@ -268,7 +273,8 @@ class Flow:
         self.ctx_sig = None
         # TCP teardown tracking: a flow is closed by RST, or by FIN in both
         # directions. A later packet on the same 5-tuple then starts a NEW
-        # flow instead of being merged into the finished one (F16).
+        # flow instead of being merged into the finished one (F16) — but only
+        # once it actually looks like a new connection, see _starts_new_flow.
         self.fin_fwd = False
         self.fin_bwd = False
         self.closed = False
@@ -384,21 +390,36 @@ class FlowTable:
         self._gen: Dict[tuple, int] = collections.defaultdict(int)
         self.lock = threading.RLock()
 
+    @staticmethod
+    def _starts_new_flow(f, pkt, ts):
+        """Should this packet open a new flow on a torn-down 5-tuple?
+
+        Yes on a SYN without ACK — that is unambiguously a new connection. Yes
+        after a quiet gap, which covers UDP and ICMP where there is no
+        handshake to look for. NO otherwise: the trailing ACK that completes a
+        FIN/FIN exchange belongs to the flow that just closed, and treating it
+        as a new one manufactures a one-packet flow that the model then has to
+        classify (it reads as neither benign session nor attack).
+        """
+        if not f.closed:
+            return False
+        if pkt["proto"] == PROTO_TCP and (pkt["flags"] & SYN) and not (pkt["flags"] & ACK):
+            return True
+        return (ts - f.last_ts) > TCP_REUSE_GAP_S
+
     def add_packet(self, pkt: dict, ts: float):
         with self.lock:
             key, forward = _flow_key(pkt)
             uk = self.active.get(key)
             f = self.flows.get(uk) if uk is not None else None
-            if f is None or f.closed:
+            if f is None or self._starts_new_flow(f, pkt, ts):
                 gen = self._gen[key]
                 self._gen[key] = gen + 1
                 uk = (key, gen)
                 f = Flow(pkt, ts)
                 self.flows[uk] = f
-                self.active[key] = uk
+            self.active[key] = uk
             f.update(pkt, ts, forward)
-            if f.closed:
-                self.active.pop(key, None)
 
     def __len__(self):
         with self.lock:

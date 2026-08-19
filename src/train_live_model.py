@@ -3,8 +3,32 @@ train_live_model.py — train the self-consistent live edge model.
 
 Trains a multiclass XGBoost on the SAME flow-feature space that the live
 sniffer produces (see flow_features.py), then exports a single self-contained
-ONNX file with the StandardScaler baked in.  The Raspberry Pi therefore needs
-only onnxruntime + numpy at inference time — no sklearn, no xgboost, no joblib.
+ONNX file.  The Raspberry Pi therefore needs only onnxruntime + numpy at
+inference time — no sklearn, no xgboost, no joblib.
+
+
+NO FEATURE SCALER  (vault/Findings/F18)
+----------------------------------------
+This model used to be a Pipeline(StandardScaler, XGBClassifier) exported as one
+ONNX file. The scaler has been removed, for two independent reasons.
+
+*It never did anything.* A gradient-boosted tree splits on `x < threshold`, so
+it is invariant to any strictly monotone per-feature transform. Standardising
+the inputs cannot change a single split decision. Measured directly: identical
+99.98% test accuracy trained on scaled and on raw features.
+
+*It broke the export.* Converted separately, the scaler is exact to 1.9e-6 and
+the classifier is a 100.00% match. Composed as a Pipeline through
+`convert_sklearn` + `update_registered_converter`, the exported ONNX agreed with
+sklearn on only 83% of samples — an internally-consistent model with 83%
+accuracy standing in for a 99.98% one (skl2onnx 1.20.0 / onnxmltools 1.16.0 /
+xgboost 3.2.0). Not a precision effect: no feature is near-constant and the
+worst amplified float32 error is ~5e-6.
+
+Dropping the scaler removes the modelling no-op, the fragile converter path,
+the mean/scale tables from the C header, and 22 divisions per inference on the
+MCU. The export is now verified against sklearn on every run and the script
+REFUSES to ship a mismatched artifact.
 
 
 SPLIT BY SCENARIO, NOT BY FLOW  (vault/Findings/F13)
@@ -48,8 +72,6 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from sklearn.model_selection import GroupShuffleSplit
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
 from sklearn.metrics import (
     accuracy_score, f1_score, classification_report, confusion_matrix,
 )
@@ -89,42 +111,36 @@ def group_split(df, features, y, test_size=0.2):
     return tr_idx, te_idx, groups
 
 
-def fit_pipeline(X_tr, y_tr, n_class):
-    pipe = Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", XGBClassifier(
-            n_estimators=120, max_depth=6, learning_rate=0.3,
-            tree_method="hist", eval_metric="mlogloss",
-            objective="multi:softprob", num_class=n_class,
-            random_state=RS, n_jobs=-1,
-        )),
-    ])
-    pipe.fit(X_tr, y_tr)
-    return pipe
+def fit_model(X_tr, y_tr, n_class):
+    """Train on RAW features — trees are scale-invariant, see the module docstring."""
+    clf = XGBClassifier(
+        n_estimators=120, max_depth=6, learning_rate=0.3,
+        tree_method="hist", eval_metric="mlogloss",
+        objective="multi:softprob", num_class=n_class,
+        # Pin a SCALAR base_score. XGBoost >= 2.0 otherwise fits a per-class
+        # base_score VECTOR; the C export adds leaf sums only, so unequal
+        # per-class offsets would silently shift its arg-max away from the
+        # booster's. A scalar shifts every class equally and cannot.
+        base_score=0.5,
+        random_state=RS, n_jobs=-1,
+    )
+    clf.fit(X_tr, y_tr)
+    return clf
 
 
-def export_onnx(pipe, path):
-    """Convert Pipeline(StandardScaler, XGBClassifier) -> ONNX, scaler baked in."""
-    from skl2onnx import convert_sklearn, update_registered_converter
-    from skl2onnx.common.data_types import FloatTensorType
-    from skl2onnx.common.shape_calculator import (
-        calculate_linear_classifier_output_shapes,
-    )
-    from onnxmltools.convert.xgboost.operator_converters.XGBoost import (
-        convert_xgboost,
-    )
+def export_onnx(clf, path):
+    """Convert the XGBoost classifier straight to ONNX.
 
-    update_registered_converter(
-        XGBClassifier, "XGBoostXGBClassifier",
-        calculate_linear_classifier_output_shapes, convert_xgboost,
-        options={"nocl": [True, False], "zipmap": [True, False, "columns"]},
-    )
-    clf = pipe.steps[-1][1]
-    onx = convert_sklearn(
-        pipe, "live_ids",
-        initial_types=[("input", FloatTensorType([None, N_FEATURES]))],
-        target_opset={"": 15, "ai.onnx.ml": 3},
-        options={id(clf): {"zipmap": False}},
+    Deliberately NOT via convert_sklearn on a Pipeline — that path silently
+    produced an 83%-accurate stand-in for a 99.98% model (see the module
+    docstring). onnxmltools' direct XGBoost converter is a 100.00% match.
+    """
+    import onnxmltools
+    from onnxmltools.convert.common.data_types import FloatTensorType
+
+    onx = onnxmltools.convert_xgboost(
+        clf, initial_types=[("input", FloatTensorType([None, N_FEATURES]))],
+        target_opset=15,
     )
     with open(path, "wb") as f:
         f.write(onx.SerializeToString())
@@ -159,10 +175,10 @@ def main():
           f"   Test: {len(X_te):,} flows / {n_te_scen} scenarios")
     print("Split is by SCENARIO — the test set contains unseen attackers.")
 
-    pipe = fit_pipeline(X_tr, y_tr, len(kinds))
+    model = fit_model(X_tr, y_tr, len(kinds))
 
     # ── Evaluation ────────────────────────────────────────────────────────────
-    y_pred = pipe.predict(X_te)
+    y_pred = model.predict(X_te)
     acc = accuracy_score(y_te, y_pred)
     macro_f1 = f1_score(y_te, y_pred, average="macro")
     # binary view: benign(0) vs attack(!=0)
@@ -207,7 +223,7 @@ def main():
     # ── Ablation: how much work is dst_port doing? (F15) ─────────────────────
     port_idx = FEATURE_NAMES.index("dst_port")
     keep = [i for i in range(N_FEATURES) if i != port_idx]
-    abl = fit_pipeline(X_tr[:, keep], y_tr, len(kinds))
+    abl = fit_model(X_tr[:, keep], y_tr, len(kinds))
     y_abl = abl.predict(X_te[:, keep])
     abl_acc = accuracy_score(y_te, y_abl)
     abl_f1 = f1_score(y_te, y_abl, average="macro")
@@ -229,13 +245,11 @@ def main():
     # ── Export ────────────────────────────────────────────────────────────────
     os.makedirs(MODELS, exist_ok=True)
     onnx_path = os.path.join(MODELS, "live_ids.onnx")
-    size = export_onnx(pipe, onnx_path)
+    size = export_onnx(model, onnx_path)
     print(f"Exported {onnx_path}  ({size/1024:.1f} KB)")
 
-    # raw booster + scaler params — enables the dependency-free C export (MCUs)
-    pipe.named_steps["clf"].get_booster().save_model(
-        os.path.join(MODELS, "live_ids_booster.json"))
-    sc = pipe.named_steps["scaler"]
+    # raw booster — enables the dependency-free C export (MCUs)
+    model.get_booster().save_model(os.path.join(MODELS, "live_ids_booster.json"))
 
     meta = {
         "model": "live_ids",
@@ -246,8 +260,7 @@ def main():
         "categories": {k: tg.CATEGORY.get(k, "attack") for k in kinds},
         "attack_labels": [k for k in kinds if k != "benign"],
         "num_class": len(kinds),
-        "scaler_mean": [round(float(v), 6) for v in sc.mean_],
-        "scaler_scale": [round(float(v), 6) for v in sc.scale_],
+        "scaler": None,   # trees are scale-invariant; see F18
         "onnx_input": "input",
         "metrics": {
             "multiclass_accuracy": round(float(acc), 4),
@@ -272,13 +285,23 @@ def main():
         json.dump(meta, f, indent=2)
     print(f"Saved {os.path.join(MODELS, 'live_meta.json')}")
 
-    # ── Verify the ONNX matches sklearn predictions ───────────────────────────
+    # ── Verify the ONNX matches sklearn, and REFUSE to ship it if not ────────
+    # A silently-wrong export is the failure mode that produced F03; the check
+    # is worthless unless it can stop the run.
     import onnxruntime as rt
     sess = rt.InferenceSession(onnx_path)
-    out = sess.run(None, {"input": X_te[:2000].astype(np.float32)})
-    onnx_labels = out[0].ravel()
-    agree = (onnx_labels == y_pred[:2000]).mean()
-    print(f"ONNX vs sklearn agreement (2000 samples): {agree*100:.2f}%")
+    probe = X_te[:5000].astype(np.float32)
+    onnx_labels = sess.run(None, {"input": probe})[0].ravel()
+    agree = (onnx_labels == y_pred[:len(probe)]).mean()
+    print(f"ONNX vs sklearn agreement ({len(probe):,} samples): {agree*100:.2f}%")
+    if agree < 0.999:
+        os.remove(onnx_path)
+        sys.exit(
+            f"[ERROR] exported ONNX disagrees with the trained pipeline "
+            f"({agree*100:.2f}% agreement) — removed {onnx_path} rather than "
+            f"shipping it.\n"
+            f"        Most likely cause: a non-scalar XGBoost base_score that "
+            f"the onnxmltools converter mishandles.")
 
 
 if __name__ == "__main__":

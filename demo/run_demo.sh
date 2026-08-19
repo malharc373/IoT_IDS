@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # run_demo.sh — end-to-end IoT-IDS demonstration (no root required).
 #
-#   1. (re)generate a fresh mixed capture: benign traffic + 6 attack types
+#   1. (re)generate a fresh mixed capture: benign traffic + 9 attack types
 #   2. replay it through the IDS with live-style, aggregated alerts
 #   3. run held-out validation on unseen scenarios and print the scorecard
 #
@@ -15,7 +15,7 @@ export PYTHONWARNINGS=ignore
 
 BOLD=$'\033[1m'; CYA=$'\033[36m'; NC=$'\033[0m'
 
-echo "${BOLD}${CYA}==> [1/3] Generating fresh mixed capture (benign + 6 attacks)${NC}"
+echo "${BOLD}${CYA}==> [1/3] Generating fresh mixed capture (benign + 9 attacks)${NC}"
 python - <<'PY'
 import sys; sys.path.insert(0, "attacks")
 import build_corpus as bc
@@ -36,4 +36,4 @@ echo "${BOLD}Artifacts:${NC}"
 echo "  logs/alerts.jsonl                              (alert feed)"
 echo "  demo/results/heldout_confusion_matrix.png      (validation)"
 echo "  demo/results/live_confusion_matrix.png         (training test)"
-echo "  models/live_ids.onnx                           (edge model, ~55 KB)"
+echo "  models/live_ids.onnx                           (edge model, ~96 KB)"

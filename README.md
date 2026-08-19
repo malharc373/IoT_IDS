@@ -9,7 +9,7 @@ network attacks in real time on cheap hardware*:
 
 1. **Live edge IDS/IPS** — a self-contained real-time sensor. It sniffs traffic,
    aggregates packets into bidirectional flows, and classifies each flow with a
-   ~90 KB ONNX model (scaler baked in) in **microseconds per flow**. It detects
+   ~96 KB ONNX model in **microseconds per flow**. It detects
    **9 attack types across 4 categories**, reports aggregated per-source
    incidents, and can **actively block** offenders (IPS mode). The same model
    also compiles to a **dependency-free C header** for microcontrollers.
@@ -125,20 +125,31 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 
 | Metric | Value |
 |---|---|
-| Multiclass accuracy (10 classes) | **99.9%** |
-| Attack detection rate (recall) | 99.9% |
+| Multiclass accuracy (10 classes) | **~100%** |
+| Attack detection rate (recall) | 100% |
 | Benign false-positive rate | **0.0%** |
-| Hardest class | `ssh_bruteforce` (recall ~94.5%) |
-| Model size (ONNX / C const-data) | ~90 KB / ~42 KB |
+| Model size (ONNX / C const-data) | ~96 KB / ~46 KB |
 | Inference | ~6 µs/flow |
 
-> **Honest caveat.** This is *synthetic* traffic. Adding size noise and
-> attack-resembling benign traffic dropped the score from a suspicious 100% to a
-> realistic 99.9% with an identifiable weak spot (brute-force vs benign is
-> genuinely subtle at flow level) — evidence the model is learning behaviour,
-> not memorising. But real-world accuracy can only be claimed on real labeled
-> traffic: that is the SFAF result below and the purpose of the 5-dataset
-> pipeline (`code/02_train_sfaf.py`).
+> **Read this number as a property of the generators, not of the detector.**
+> Three things were checked to find out what the ~100% actually means, and all
+> three came back clean:
+>
+> - **Split by scenario, not by row.** Flows from one scenario share an attacker
+>   and identical host-context values, so a random row split leaks. Grouping on
+>   scenario (test attackers never seen in training) moves the score by 0.0001.
+> - **Benign background mixed into every attack scenario**, so the three
+>   host-context features are measured against a realistic backdrop instead of
+>   an empty capture. No change.
+> - **`dst_port` ablation on every training run.** Removing the target port
+>   entirely costs 0.0000 accuracy and no class loses >0.02 F1 — the model is
+>   not a port lookup table.
+>
+> What remains is the honest explanation: **the synthetic corpus is trivially
+> separable**, along several redundant axes at once. That is why no correction
+> moves the number. It cannot be quoted as real-world accuracy — for that, see
+> the cross-dataset study below, and the open work to validate on real labelled
+> IoT-23 captures.
 
 ### Cross-dataset generalization (the honest real-world number)
 
@@ -198,7 +209,8 @@ python code/cross_dataset_eval.py           # run the generalization study
 ```
 src/
   flow_features.py     packet→flow→22-feature extractor (train == serve)
-  train_live_model.py  train the edge model; export ONNX + booster + meta
+  train_live_model.py  train the edge model (scenario-level split, dst_port
+                       ablation); export ONNX + booster + meta, verified
   ids_daemon.py        the IDS/IPS: --pcap / --replay / --iface, --ips/--prevent
   ips_response.py      active response ladder: monitor/throttle/block, scoped
                        to INPUT (host) or INPUT+FORWARD (inline network)
@@ -206,7 +218,8 @@ src/
   export_c.py          compile the model to a dependency-free C header (MCUs)
 attacks/
   traffic_gen.py       scapy generators: benign family + 9 attack types
-  build_corpus.py      synth traffic → labeled flow dataset
+  build_corpus.py      synth traffic → labeled flow dataset (attacks mixed
+                       with benign background; scenario provenance recorded)
   README.md            synthetic pcaps + real-tool (nmap/hping3/…) equivalents
 demo/
   run_demo.sh          one-command end-to-end demonstration
@@ -225,9 +238,10 @@ code/
   download_datasets.py dataset fetch (Kaggle + auth-free direct URLs)
   *.ipynb              EDA / SFAF / edge-deployment notebooks
 models/
-  live_ids.onnx        deployable edge model (scaler baked in, ~90 KB)
+  live_ids.onnx        deployable edge model (~96 KB, raw features — trees are
+                       scale-invariant, so there is no scaler to drift)
   live_ids.h           dependency-free C model for microcontrollers
-  live_meta.json       feature order, labels, categories, scaler, metrics
+  live_meta.json       feature order, labels, categories, metrics, ablation
 tests/
   smoke_test.py        24 checks over every module/script
 .env.example           optional configuration template (copy to .env)

@@ -6,6 +6,29 @@ sniffer produces (see flow_features.py), then exports a single self-contained
 ONNX file with the StandardScaler baked in.  The Raspberry Pi therefore needs
 only onnxruntime + numpy at inference time — no sklearn, no xgboost, no joblib.
 
+
+SPLIT BY SCENARIO, NOT BY FLOW  (vault/Findings/F13)
+-----------------------------------------------------
+The corpus is generated as randomized *scenarios*. Every flow inside one
+scenario shares an attacker, a victim, and — bit for bit — the same
+host-context feature values, because those three features are computed across
+the scenario's own flows. A random row split therefore puts near-identical
+siblings on both sides of the boundary, which is why the pre-2026-08 model
+reported multiclass accuracy, macro-F1, binary accuracy and binary F1 of
+exactly 1.0000. That is a leakage signature, not a result.
+
+Splitting on `scenario` with GroupShuffleSplit means the test set contains
+attackers the model has never seen.
+
+
+DST_PORT ABLATION  (vault/Findings/F15)
+----------------------------------------
+Several classes are near-separable from the target port alone (mqtt_flood is
+always 1883, ssh_bruteforce always 22, slowloris always 80). A model can score
+well by memorising port constants rather than learning behaviour, so every run
+also trains an identical model with `dst_port` removed and reports both. The
+gap between them is the honest measure of how much work the port is doing.
+
 Outputs:
     models/live_ids.onnx     scaler + classifier, one file
     models/live_meta.json     feature order, label map, metrics
@@ -24,7 +47,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import (
@@ -53,6 +76,31 @@ def balanced_sample(df: pd.DataFrame) -> pd.DataFrame:
         parts.append(g)
     out = pd.concat(parts).sample(frac=1.0, random_state=RS).reset_index(drop=True)
     return out
+
+
+def group_split(df, features, y, test_size=0.2):
+    """Split so that no scenario appears on both sides (see F13)."""
+    if "scenario" not in df.columns:
+        sys.exit("[ERROR] flows.parquet has no 'scenario' column — regenerate it:\n"
+                 "        python attacks/build_corpus.py --scenarios 30")
+    groups = df["scenario"].values
+    gss = GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=RS)
+    tr_idx, te_idx = next(gss.split(features, y, groups=groups))
+    return tr_idx, te_idx, groups
+
+
+def fit_pipeline(X_tr, y_tr, n_class):
+    pipe = Pipeline([
+        ("scaler", StandardScaler()),
+        ("clf", XGBClassifier(
+            n_estimators=120, max_depth=6, learning_rate=0.3,
+            tree_method="hist", eval_metric="mlogloss",
+            objective="multi:softprob", num_class=n_class,
+            random_state=RS, n_jobs=-1,
+        )),
+    ])
+    pipe.fit(X_tr, y_tr)
+    return pipe
 
 
 def export_onnx(pipe, path):
@@ -100,21 +148,18 @@ def main():
     y = df["kind"].map(kind_to_id).values
     X = df[FEATURE_NAMES].values.astype(np.float32)
 
-    X_tr, X_te, y_tr, y_te = train_test_split(
-        X, y, test_size=0.2, random_state=RS, stratify=y
-    )
-    print(f"\nTrain: {len(X_tr):,}  Test: {len(X_te):,}")
+    tr_idx, te_idx, groups = group_split(df, X, y)
+    X_tr, X_te = X[tr_idx], X[te_idx]
+    y_tr, y_te = y[tr_idx], y[te_idx]
+    n_tr_scen = len(set(groups[tr_idx]))
+    n_te_scen = len(set(groups[te_idx]))
+    overlap = set(groups[tr_idx]) & set(groups[te_idx])
+    assert not overlap, f"scenario leaked across the split: {list(overlap)[:3]}"
+    print(f"\nTrain: {len(X_tr):,} flows / {n_tr_scen} scenarios"
+          f"   Test: {len(X_te):,} flows / {n_te_scen} scenarios")
+    print("Split is by SCENARIO — the test set contains unseen attackers.")
 
-    pipe = Pipeline([
-        ("scaler", StandardScaler()),
-        ("clf", XGBClassifier(
-            n_estimators=120, max_depth=6, learning_rate=0.3,
-            tree_method="hist", eval_metric="mlogloss",
-            objective="multi:softprob", num_class=len(kinds),
-            random_state=RS, n_jobs=-1,
-        )),
-    ])
-    pipe.fit(X_tr, y_tr)
+    pipe = fit_pipeline(X_tr, y_tr, len(kinds))
 
     # ── Evaluation ────────────────────────────────────────────────────────────
     y_pred = pipe.predict(X_te)
@@ -159,6 +204,28 @@ def main():
     plt.savefig(cm_path, dpi=150)
     print(f"Saved {cm_path}")
 
+    # ── Ablation: how much work is dst_port doing? (F15) ─────────────────────
+    port_idx = FEATURE_NAMES.index("dst_port")
+    keep = [i for i in range(N_FEATURES) if i != port_idx]
+    abl = fit_pipeline(X_tr[:, keep], y_tr, len(kinds))
+    y_abl = abl.predict(X_te[:, keep])
+    abl_acc = accuracy_score(y_te, y_abl)
+    abl_f1 = f1_score(y_te, y_abl, average="macro")
+    print(f"\n── dst_port ablation ────────────────────────────────────────")
+    print(f"  with dst_port   : acc={acc:.4f}  macro-F1={macro_f1:.4f}")
+    print(f"  without dst_port: acc={abl_acc:.4f}  macro-F1={abl_f1:.4f}")
+    print(f"  delta           : acc={acc-abl_acc:+.4f}  macro-F1={macro_f1-abl_f1:+.4f}")
+    per_class_full = f1_score(y_te, y_pred, average=None, labels=range(len(kinds)))
+    per_class_abl = f1_score(y_te, y_abl, average=None, labels=range(len(kinds)))
+    hits = [(kinds[i], per_class_full[i] - per_class_abl[i])
+            for i in range(len(kinds))]
+    hits.sort(key=lambda x: -x[1])
+    worst = [f"{k} {d:+.3f}" for k, d in hits[:3] if d > 0.02]
+    if worst:
+        print(f"  most port-dependent classes: {', '.join(worst)}")
+    else:
+        print(f"  no class loses more than 0.02 F1 without the port")
+
     # ── Export ────────────────────────────────────────────────────────────────
     os.makedirs(MODELS, exist_ok=True)
     onnx_path = os.path.join(MODELS, "live_ids.onnx")
@@ -191,6 +258,15 @@ def main():
         "cap_per_class": CAP_PER_CLASS,
         "n_train": int(len(X_tr)),
         "n_test": int(len(X_te)),
+        "split": "GroupShuffleSplit on scenario (no scenario spans the split)",
+        "n_train_scenarios": int(n_tr_scen),
+        "n_test_scenarios": int(n_te_scen),
+        "ablation_no_dst_port": {
+            "multiclass_accuracy": round(float(abl_acc), 4),
+            "macro_f1": round(float(abl_f1), 4),
+            "accuracy_delta": round(float(acc - abl_acc), 4),
+            "macro_f1_delta": round(float(macro_f1 - abl_f1), 4),
+        },
     }
     with open(os.path.join(MODELS, "live_meta.json"), "w") as f:
         json.dump(meta, f, indent=2)

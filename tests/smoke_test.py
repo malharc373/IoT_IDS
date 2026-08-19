@@ -348,9 +348,13 @@ def t_dashboard_auth_and_binding():
                        capture_output=True, text=True, timeout=30)
     assert r.returncode != 0 and "refusing to serve" in r.stderr, r.stderr[:400]
 
-    # with a token, every request must carry it
+    # with a token, every request must carry it. Generated at runtime — a
+    # credential-shaped literal in the tree trips secret scanners and teaches
+    # the wrong habit, even in a test.
+    import secrets as _secrets
+    tok = _secrets.token_urlsafe(16)
     dash.Handler.feed = dash.AlertFeed(os.path.join(TMP, "auth.jsonl"))
-    dash.Handler.token = "s3cret-token"
+    dash.Handler.token = tok
     srv = ThreadingHTTPServer(("127.0.0.1", 0), dash.Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     port = srv.server_address[1]
@@ -361,14 +365,67 @@ def t_dashboard_auth_and_binding():
         except urllib.error.HTTPError as e:
             assert e.code == 401
         ok = urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/api/state?token=s3cret-token", timeout=3)
+            f"http://127.0.0.1:{port}/api/state?token={tok}", timeout=3)
         assert ok.status == 200
         req = urllib.request.Request(f"http://127.0.0.1:{port}/api/state",
-                                     headers={"X-Auth-Token": "s3cret-token"})
+                                     headers={"X-Auth-Token": tok})
         assert urllib.request.urlopen(req, timeout=3).status == 200
     finally:
         srv.shutdown()
         dash.Handler.token = None
+
+
+def t_dashboard_token_file():
+    """Secrets come from a file, not from argv or a unit's Environment (F10)."""
+    import importlib.util, secrets as _secrets, subprocess
+    spec = importlib.util.spec_from_file_location("dash4", os.path.join(ROOT, "src", "dashboard.py"))
+    dash = importlib.util.module_from_spec(spec); spec.loader.exec_module(dash)
+    tokf = os.path.join(TMP, "dash.token")
+    with open(tokf, "w") as f:
+        f.write(_secrets.token_urlsafe(16) + "\n")
+    # a token file satisfies the off-loopback auth requirement (bind to port 0
+    # would succeed, so just check the guard no longer fires on the token path)
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "src", "dashboard.py"),
+                        "--host", "0.0.0.0", "--port", "0", "--token-file",
+                        os.path.join(TMP, "missing.token")],
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode != 0 and "cannot read --token-file" in r.stderr, r.stderr[:300]
+
+    # the Pi installer must not bake the secret into the systemd unit
+    setup = open(os.path.join(ROOT, "deploy", "setup_pi.sh")).read()
+    assert "--token-file" in setup, "installer does not use --token-file"
+    assert "Environment=IOTIDS_DASHBOARD_TOKEN" not in setup, (
+        "token placed in the systemd unit: world-readable and visible in "
+        "`systemctl show`")
+
+
+def t_no_credential_literals():
+    """No credential-shaped literals in tracked source (secret-scanner guard).
+
+    Committing a fake-but-real-looking secret trips scanners like GitGuardian
+    and normalises the habit. Test fixtures generate their tokens at runtime.
+    """
+    import re, subprocess
+    tracked = subprocess.run(["git", "-C", ROOT, "ls-files", "*.py", "*.sh", "*.json",
+                              "*.service", "*.yml", "*.yaml"],
+                             capture_output=True, text=True).stdout.split()
+    # a quoted literal assigned to a secret-ish name
+    pat = re.compile(
+        r"""(?i)\b(token|secret|passwd|password|api_?key|access_?key)\b\s*[=:]\s*["'][^"'\n]{6,}["']""")
+    allow = re.compile(r"(?i)(generate|<[^>]+>|\$\{?[A-Z_]+|xxx|changeme|example|your[_-])")
+    hits = []
+    for rel in tracked:
+        fp = os.path.join(ROOT, rel)
+        try:
+            txt = open(fp, errors="ignore").read()
+        except OSError:
+            continue
+        for m in pat.finditer(txt):
+            if allow.search(m.group(0)):
+                continue
+            line = txt[:m.start()].count("\n") + 1
+            hits.append(f"{rel}:{line}: {m.group(0)[:70]}")
+    assert not hits, "credential-shaped literals found:\n  " + "\n  ".join(hits)
 
 
 def t_dashboard_incremental_and_rotation():
@@ -663,6 +720,8 @@ def main():
         ("trivial-baseline guard", t_trivial_baseline),
         ("web dashboard", t_dashboard),
         ("dashboard auth + binding", t_dashboard_auth_and_binding),
+        ("dashboard token file", t_dashboard_token_file),
+        ("no credential literals", t_no_credential_literals),
         ("dashboard incremental reads", t_dashboard_incremental_and_rotation),
         ("alert log rotation", t_alert_log_rotation),
         ("detector classify known", t_detector_classify_known),

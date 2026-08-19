@@ -25,10 +25,15 @@ being blocked, and the internal addressing of the monitored segment. That is
 reconnaissance material, so it is not served to a network by accident.
 
   * default bind is 127.0.0.1 (was 0.0.0.0)
-  * binding to a non-loopback address REQUIRES --token (or the
-    IOTIDS_DASHBOARD_TOKEN env var), or an explicit --insecure acknowledgement
+  * binding to a non-loopback address REQUIRES a token, or an explicit
+    --insecure acknowledgement
   * with a token set, every request must carry ?token=... or an
     X-Auth-Token header
+
+Prefer --token-file over --token: a value passed on the command line is visible
+to every local user in `ps`, and a value baked into a systemd unit's
+Environment= is visible in `systemctl show` and in a world-readable unit file.
+A 600 file read at startup avoids both.
 
 There is no TLS here — it is a stdlib http.server. Over an untrusted network,
 prefer an SSH tunnel:  ssh -L 8080:127.0.0.1:8080 pi@<host>
@@ -390,16 +395,29 @@ def main():
     ap.add_argument("--host", default="127.0.0.1",
                     help="bind address (default 127.0.0.1 — loopback only)")
     ap.add_argument("--log", default=DEFAULT_LOG)
+    ap.add_argument("--token-file", dest="token_file",
+                    default=os.environ.get("IOTIDS_DASHBOARD_TOKEN_FILE"),
+                    help="read the required token from this file (preferred: a "
+                         "command-line value is visible to every local user in ps)")
     ap.add_argument("--token", default=os.environ.get("IOTIDS_DASHBOARD_TOKEN"),
                     help="require this token on every request "
-                         "(?token=... or X-Auth-Token). Use 'generate' to mint one.")
+                         "(?token=... or X-Auth-Token). Use 'generate' to mint one. "
+                         "Prefer --token-file.")
     ap.add_argument("--insecure", action="store_true",
                     help="acknowledge serving the alert feed to a network with "
                          "no authentication")
     args = ap.parse_args()
 
     token = args.token
-    if token == "generate":
+    if args.token_file:
+        try:
+            with open(args.token_file) as f:
+                token = f.read().strip()
+        except OSError as e:
+            sys.exit(f"[ERROR] cannot read --token-file {args.token_file}: {e}")
+        if not token:
+            sys.exit(f"[ERROR] --token-file {args.token_file} is empty")
+    elif token == "generate":
         token = secrets.token_urlsafe(24)
 
     if not _is_loopback(args.host) and not token and not args.insecure:

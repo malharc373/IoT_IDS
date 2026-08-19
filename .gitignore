@@ -60,3 +60,7 @@ models/live_ids_booster.json
 !models/xgb_edge.onnx
 !models/scaler_unified.pkl
 !models/edge_meta.json
+
+# ── Secrets generated at runtime (never commit) ───────────────────────────────
+*.token
+dashboard.token

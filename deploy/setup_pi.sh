@@ -18,6 +18,11 @@ DASH_PORT="${2:-8080}"
 # The dashboard exposes the alert feed (attacking hosts, blocked hosts, segment
 # addressing), so reaching it over the LAN requires a token. Reuse the existing
 # one across re-runs so bookmarked URLs keep working.
+#
+# The token lives ONLY in this 600 file. It is deliberately not placed in the
+# systemd unit via Environment= (units are world-readable and the value shows up
+# in `systemctl show`) and not passed as an argument (visible to any local user
+# in `ps`). The service reads it with --token-file.
 TOKEN_FILE="$(cd "$(dirname "$0")/.." && pwd)/logs/dashboard.token"
 mkdir -p "$(dirname "$TOKEN_FILE")"
 if [ -s "$TOKEN_FILE" ]; then
@@ -27,6 +32,7 @@ else
     printf '%s' "$DASH_TOKEN" > "$TOKEN_FILE"
     chmod 600 "$TOKEN_FILE"
 fi
+chown "$RUN_USER" "$TOKEN_FILE" 2>/dev/null || true
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RUN_USER="${SUDO_USER:-$(whoami)}"
 VENV="$REPO_DIR/.venv"
@@ -94,8 +100,7 @@ Wants=network-online.target
 Type=simple
 User=$RUN_USER
 WorkingDirectory=$REPO_DIR
-Environment=IOTIDS_DASHBOARD_TOKEN=$DASH_TOKEN
-ExecStart=$PY $REPO_DIR/src/dashboard.py --host 0.0.0.0 --port $DASH_PORT --log $REPO_DIR/logs/alerts.jsonl
+ExecStart=$PY $REPO_DIR/src/dashboard.py --host 0.0.0.0 --port $DASH_PORT --token-file $TOKEN_FILE --log $REPO_DIR/logs/alerts.jsonl
 Restart=on-failure
 RestartSec=3
 StandardOutput=journal

@@ -85,6 +85,18 @@ def bench_params():
         cd = f" (~{n_nodes*16//1024} KB const data)" if n_nodes else ""
         out(f"  C header size          : {sizes['live_ids.h']/1024:.1f} KB{cd}")
     out(f"  In-domain metrics      : {meta['metrics']}")
+    if meta.get("split"):
+        out(f"  Split                  : {meta['split']}")
+    abl = meta.get("ablation_no_dst_port")
+    if abl:
+        out(f"  Without dst_port       : acc={abl['multiclass_accuracy']} "
+            f"(delta {abl['accuracy_delta']:+.4f}) — the model is not a port lookup")
+    out("  CAVEAT                 : these are SYNTHETIC-traffic numbers. The")
+    out("                           corpus is trivially separable (scenario-level")
+    out("                           split, mixed benign background and a dst_port")
+    out("                           ablation all leave the score unchanged), so")
+    out("                           read them as a property of the generators,")
+    out("                           not as detection accuracy on real traffic.")
     return meta, sizes, n_trees, n_nodes or 0
 
 
@@ -264,7 +276,8 @@ def bench_accuracy():
         if m.any():
             out(f"    {k:<16} {_recall(m, yp == i)*100:5.1f}%")
     out("\n  NOTE: synthetic traffic is separable; see CROSS_DATASET_FINDINGS.md")
-    out("        for the honest cross-dataset numbers (in-domain 0.98 vs cross 0.45).")
+    out("        for the honest cross-dataset numbers: in-domain ROC-AUC 0.996 vs")
+    out("        cross-domain 0.514 against a chance baseline of 0.500 (MCC -0.002).")
     return acc, mf1, det_rate, fpr
 
 

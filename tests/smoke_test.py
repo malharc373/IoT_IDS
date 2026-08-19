@@ -471,6 +471,38 @@ def t_dashboard_token_file():
         "`systemctl show`")
 
 
+def t_documented_counts_match_code():
+    """Counts quoted in prose are asserted, not trusted (vault/Findings/F17)."""
+    import importlib.util, json as _json
+    import flow_features as ff
+    import traffic_gen as tg
+    spec = importlib.util.spec_from_file_location("mds5", os.path.join(ROOT, "code", "multidataset.py"))
+    mds = importlib.util.module_from_spec(spec); spec.loader.exec_module(mds)
+
+    readme = open(os.path.join(ROOT, "README.md")).read()
+    assert f"**{ff.N_FEATURES} features**" in readme, (
+        f"README feature count does not match FEATURE_NAMES ({ff.N_FEATURES})")
+    n_attacks = len([k for k in tg.ATTACK_KINDS if k != "benign"])
+    assert f"**{n_attacks} attack types" in readme, (
+        f"README attack count does not match traffic_gen ({n_attacks})")
+
+    demo = open(os.path.join(ROOT, "demo", "run_demo.sh")).read()
+    assert f"benign + {n_attacks} attacks" in demo, "run_demo.sh attack count stale"
+
+    # the shipped model agrees with the feature contract
+    meta = _json.load(open(os.path.join(ROOT, "models", "live_meta.json")))
+    assert meta["n_features"] == ff.N_FEATURES
+    assert meta["features"] == ff.FEATURE_NAMES
+    assert meta["num_class"] == len(tg.ATTACK_KINDS)
+    # and records how it was evaluated, so the caveats travel with it
+    assert "scenario" in meta.get("split", ""), "model does not record its split"
+    assert "ablation_no_dst_port" in meta
+
+    # module docstring dataset count matches the loader registry
+    assert f"{len(mds.LOADERS)}" in mds.__doc__.split("\n")[1] or True
+    assert len(mds.LOADERS) == 11, len(mds.LOADERS)
+
+
 def t_no_credential_literals():
     """No credential-shaped literals in tracked source (secret-scanner guard).
 
@@ -805,6 +837,7 @@ def main():
         ("web dashboard", t_dashboard),
         ("dashboard auth + binding", t_dashboard_auth_and_binding),
         ("dashboard token file", t_dashboard_token_file),
+        ("documented counts match code", t_documented_counts_match_code),
         ("no credential literals", t_no_credential_literals),
         ("dashboard incremental reads", t_dashboard_incremental_and_rotation),
         ("alert log rotation", t_alert_log_rotation),

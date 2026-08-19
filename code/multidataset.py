@@ -97,7 +97,10 @@ def to_category(raw: str) -> str:
     if s in ("benign", "normal", "background", "0", "legitimate", "normaltraffic"):
         return "benign"
     def has(*keys): return any(k in s for k in keys)
-    if has("mirai", "bashlite", "gafgyt", "okiru", "torii", "bot", "c2", "mozi"):
+    # "c&c" catches IoT-23's C&C, C&C-Torii, C&C-HeartBeat, C&C-FileDownload —
+    # without it plain "C&C" fell through to other_attack (vault/Findings/F19)
+    if has("mirai", "bashlite", "gafgyt", "okiru", "torii", "bot", "c2", "c&c",
+           "mozi", "kenjiro", "hakai", "hajime", "muhstik", "hide and seek"):
         return "botnet"
     if has("scan", "recon", "portscan", "fingerprint", "port_os", "vulnerability"):
         return "recon"
@@ -540,6 +543,14 @@ def _read_zeek(path, usecols=None):
         return pd.DataFrame()
     df = pd.read_csv(path, sep="\t", comment="#", names=fields,
                      na_values="-", low_memory=False)
+    return _split_composite_columns(df)
+
+
+def _split_composite_columns(df):
+    """Expand any column whose NAME contains whitespace into its parts.
+
+    See _read_zeek for why IoT-23 needs this.
+    """
     for col in list(df.columns):
         parts = col.split()
         if len(parts) > 1:
@@ -548,6 +559,68 @@ def _read_zeek(path, usecols=None):
                 df[name] = sub[j] if j < sub.shape[1] else np.nan
             df = df.drop(columns=[col])
     return df
+
+
+def _count_data_lines(path, buf=1 << 22):
+    """Number of non-comment lines, by byte scan — no parsing, no memory."""
+    total = comments = 0
+    with open(path, "rb") as f:
+        head = f.read(buf)
+        comments = sum(1 for ln in head.split(b"\n") if ln.startswith(b"#"))
+        f.seek(0)
+        while True:
+            chunk = f.read(buf)
+            if not chunk:
+                break
+            total += chunk.count(b"\n")
+    return max(total - comments, 0)
+
+
+# Columns the SFAF alignment actually needs from a Zeek conn log. Parsing only
+# these roughly halves the cost on IoT-23's multi-GB files.
+_ZEEK_WANTED = {
+    "ts", "duration", "orig_pkts", "resp_pkts", "orig_bytes", "resp_bytes",
+    "orig_ip_bytes", "resp_ip_bytes", "missed_bytes",
+    "id.orig_p", "id.resp_p", "label", "detailed-label",
+}
+
+
+def _read_zeek_sampled(path, max_rows, chunksize=250_000):
+    """Uniformly sample `max_rows` rows from a Zeek log without loading it all.
+
+    IoT-23 ships single conn.log.labeled files up to 10 GB; `pd.read_csv` on
+    one materialises tens of GB and thrashes. Row count comes from a byte scan
+    (fast, no parsing), then each parsed chunk is sampled at the corresponding
+    fraction — a uniform sample of the whole file with memory bounded by one
+    chunk. Sampling stays random rather than head-truncated, for the same
+    reason as Bot-IoT (vault/Findings/F11).
+    """
+    fields = None
+    with open(path, "r", errors="ignore") as f:
+        for line in f:
+            if line.startswith("#fields"):
+                fields = line.rstrip("\n").split("\t")[1:]
+                break
+    if not fields:
+        return pd.DataFrame()
+
+    # keep only the columns the alignment needs; a composite column is kept
+    # whenever any of its parts is wanted (that is where `label` hides)
+    keep = [c for c in fields if _ZEEK_WANTED & set(c.split())]
+
+    n_rows = _count_data_lines(path)
+    frac = 1.0 if not max_rows or n_rows <= max_rows else max_rows / n_rows
+    parts = []
+    reader = pd.read_csv(path, sep="\t", comment="#", names=fields,
+                         usecols=keep or None, na_values="-",
+                         low_memory=False, chunksize=chunksize)
+    for chunk in reader:
+        parts.append(chunk if frac >= 1.0
+                     else chunk.sample(frac=frac, random_state=RS))
+    if not parts:
+        return pd.DataFrame()
+    df = pd.concat(parts, ignore_index=True)
+    return _split_composite_columns(df)
 
 
 def load_iot23(root, max_rows_per_file=60_000):
@@ -561,13 +634,26 @@ def load_iot23(root, max_rows_per_file=60_000):
     if not files:
         raise FileNotFoundError("IoT-23 conn.log.labeled files not found — "
                                 "extract iot_23_datasets_small.tar.gz first")
+
+    # The extracted corpus is ~27 GB (one file is 10 GB on its own), so a full
+    # sampling pass costs tens of minutes of pure I/O. Cache the sampled frame
+    # and reuse it while it is newer than every source file.
+    cache = os.path.join(root, "IoT23", f"_sampled_{max_rows_per_file}.parquet")
+    try:
+        if os.path.exists(cache):
+            newest = max(os.path.getmtime(f) for f in files)
+            if os.path.getmtime(cache) > newest:
+                return pd.read_parquet(cache)
+    except Exception:
+        pass
+
     dfs = []
-    for fp in files:
-        t = _read_zeek(fp)
+    for fp in sorted(files):
+        t = _read_zeek_sampled(fp, max_rows_per_file)
         if len(t):
-            if max_rows_per_file and len(t) > max_rows_per_file:
-                t = t.sample(max_rows_per_file, random_state=RS)
             dfs.append(t)
+    if not dfs:
+        return pd.DataFrame()
     df = pd.concat(dfs, ignore_index=True)
     df.columns = [c.strip() for c in df.columns]
     lab = df.get("label", pd.Series(["Benign"] * len(df))).astype(str).str.strip()
@@ -594,7 +680,12 @@ def load_iot23(root, max_rows_per_file=60_000):
                               / tot_p.where(tot_p > 0),
         "Packet Length Std": None,
     }
-    return _finish(df, fmap, y, cat, "iot_23")
+    out = _finish(df, fmap, y, cat, "iot_23")
+    try:
+        out.to_parquet(cache, index=False)
+    except Exception:
+        pass
+    return out
 
 
 def load_wustl(root):

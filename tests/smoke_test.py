@@ -811,6 +811,65 @@ def t_multidataset_taxonomy():
     assert mds.to_category("normal") == "benign"
 
 
+def t_zeek_composite_labels():
+    """IoT-23's space-separated label triple must not read as all-benign (F19).
+
+    Hermetic: builds a miniature conn.log.labeled with the exact quirk rather
+    than needing the 27 GB corpus.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mds6", os.path.join(ROOT, "code", "multidataset.py"))
+    mds = importlib.util.module_from_spec(spec); spec.loader.exec_module(mds)
+
+    path = os.path.join(TMP, "conn.log.labeled")
+    # the last three field names are space-separated, as IoT-23 ships them
+    fields = ("ts\tuid\tid.orig_h\tid.orig_p\tid.resp_h\tid.resp_p\tproto\t"
+              "duration\torig_bytes\tresp_bytes\tmissed_bytes\torig_pkts\t"
+              "orig_ip_bytes\tresp_pkts\tresp_ip_bytes\t"
+              "tunnel_parents   label   detailed-label")
+    rows = [
+        # ...and so are the last three VALUES
+        "1525879831.0\tC1\t192.168.100.103\t51524\t65.127.233.163\t23\ttcp\t"
+        "2.99\t0\t0\t0\t3\t180\t0\t0\t(empty)   Malicious   PartOfAHorizontalPortScan",
+        "1525879832.0\tC2\t192.168.100.103\t51525\t10.0.0.5\t80\ttcp\t"
+        "1.50\t500\t400\t0\t5\t700\t4\t560\t(empty)   Benign   -",
+        "1525879833.0\tC3\t192.168.100.103\t51526\t10.0.0.6\t23\ttcp\t"
+        "0.10\t0\t0\t0\t1\t60\t0\t0\t(empty)   Malicious   C&C",
+    ]
+    with open(path, "w") as f:
+        f.write("#separator \\x09\n#path\tconn\n#fields\t" + fields + "\n")
+        f.write("\n".join(rows) + "\n")
+
+    df = mds._read_zeek(path)
+    assert "label" in df.columns, (
+        "composite column not expanded — label would default to Benign and the "
+        f"whole dataset would read as 0% attack. got {list(df.columns)[-3:]}")
+    assert "detailed-label" in df.columns
+    assert list(df["label"]) == ["Malicious", "Benign", "Malicious"]
+    assert df["detailed-label"].iloc[0] == "PartOfAHorizontalPortScan"
+    # the numeric columns must survive the split untouched
+    assert float(df["duration"].iloc[0]) == 2.99
+    assert int(df["orig_pkts"].iloc[1]) == 5
+
+    # the chunked reader must agree with the whole-file reader
+    df2 = mds._read_zeek_sampled(path, max_rows=1000)
+    assert list(df2["label"]) == list(df["label"])
+    assert mds._count_data_lines(path) == 3
+
+    # the taxonomy must cover IoT-23's actual detailed-label vocabulary
+    for label, expected in [
+        ("PartOfAHorizontalPortScan", "recon"),
+        ("DDoS", "dos"),
+        ("C&C", "botnet"),                 # plain C&C used to fall to other_attack
+        ("C&C-Torii", "botnet"),
+        ("C&C-HeartBeat", "botnet"),
+        ("C&C-FileDownload", "botnet"),
+        ("Okiru", "botnet"),
+        ("Benign", "benign"),
+    ]:
+        assert mds.to_category(label) == expected, (label, mds.to_category(label))
+
+
 def t_trivial_baseline():
     """The degenerate-classifier guard from vault/Findings/F02."""
     import importlib.util
@@ -990,6 +1049,7 @@ TESTS = [
         ("c export + compile", t_c_export),
         ("SFAF alignment contract", t_alignment_contract),
         ("multidataset taxonomy", t_multidataset_taxonomy),
+        ("zeek composite labels", t_zeek_composite_labels),
         ("trivial-baseline guard", t_trivial_baseline),
         ("syslog/CEF SIEM export", t_syslog_cef_sink),
         ("web dashboard", t_dashboard),

@@ -26,7 +26,7 @@ import socket
 import struct
 import threading
 import collections
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, List, Optional
 
 # ── Protocol numbers ──────────────────────────────────────────────────────────
 PROTO_ICMP = 1
@@ -606,6 +606,15 @@ class FlowTable:
         """Drop flows idle longer than `older_than` seconds (live memory cap).
 
         Returns the list of evicted keys so callers can drop cached verdicts.
+
+        All three maps are pruned together. `_gen` is the subtle one: it is
+        keyed by the *bare* 5-tuple rather than by flow, so it does not shrink
+        when flows are evicted, and on a busy segment every ephemeral source
+        port leaves a permanent entry — an unbounded leak in a daemon meant to
+        run for weeks on a Pi (vault/Findings/F20). Once a 5-tuple has no live
+        flow and the caller has dropped its cached verdicts, restarting its
+        generation counter at 0 cannot collide with anything, so the entry is
+        simply removed.
         """
         with self.lock:
             dead = [k for k, f in self.flows.items() if (now - f.last_ts) > older_than]
@@ -615,6 +624,10 @@ class FlowTable:
             for base, uk in list(self.active.items()):
                 if uk not in live:
                     del self.active[base]
+            live_bases = {base for base, _gen_no in live}
+            for base in list(self._gen):
+                if base not in live_bases:
+                    del self._gen[base]
             return dead
 
 

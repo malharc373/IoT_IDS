@@ -28,7 +28,29 @@ import glob
 import subprocess
 
 BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-DS = os.path.join(BASE, "Datasets")
+DS = os.environ.get("IOTIDS_DATASETS_ROOT") or os.path.join(BASE, "Datasets")
+
+
+def ensure_dataset_root(path=None):
+    """Create the dataset root, tolerating the external-drive layout.
+
+    `Datasets/` is normally a symlink to an external volume. When that volume
+    is not mounted the symlink dangles, and `os.makedirs(..., exist_ok=True)`
+    still raises FileExistsError — `exist_ok` only suppresses the error when
+    the target is an existing *directory*, and a broken symlink is not one.
+    The entry point in the README then failed with a bare traceback instead of
+    saying which drive to plug in (vault/Findings/F21).
+    """
+    path = path or DS
+    if os.path.islink(path) and not os.path.exists(path):
+        sys.exit(
+            f"[ERROR] {path} is a symlink to {os.readlink(path)}, which is not "
+            f"mounted.\n        Mount that volume, or point the pipeline "
+            f"elsewhere with IOTIDS_DATASETS_ROOT=/path/to/datasets."
+        )
+    if os.path.exists(path) and not os.path.isdir(path):
+        sys.exit(f"[ERROR] {path} exists and is not a directory — move it aside.")
+    os.makedirs(path, exist_ok=True)
 
 # (kaggle dataset slug, subdir, note) — VERIFIED working refs (small CSV/parquet
 # mirrors preferred: Kaggle stalls on very large single-zip downloads >~150MB,
@@ -179,10 +201,18 @@ def main():
     ap = argparse.ArgumentParser(description="Fetch IDS datasets for SFAF")
     ap.add_argument("--direct", action="store_true",
                     help="also fetch auth-free direct-URL datasets (IoT-23, WUSTL)")
+    ap.add_argument("--check-only", action="store_true",
+                    help="report which datasets are present and exit without "
+                         "downloading anything (used by the test suite, and by "
+                         "anyone who just wants to know what is missing)")
     args = ap.parse_args()
 
-    os.makedirs(DS, exist_ok=True)
+    ensure_dataset_root()
     print("Checking dataset layout under Datasets/ ...")
+    if args.check_only:
+        ok = check_layout()
+        print("\nCore datasets present." if ok else "\nSome core datasets are missing.")
+        return
     if check_layout() and not args.direct:
         print("\nCore datasets present. Run: python code/02_train_sfaf.py")
         return

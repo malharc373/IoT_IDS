@@ -6,9 +6,17 @@ on:
   pull_request:
     branches: [main]
 
+# A branch that is pushed several times in a row (which is how the remediation
+# work actually happened) used to run a full matrix per push. Superseded runs
+# are now cancelled instead of queueing behind each other.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -20,13 +28,30 @@ jobs:
       - name: Install runtime + training dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt pytest ruff
+
+      # Pyflakes-class rules only — undefined names, unused imports, dead
+      # assignments. This is not style policing: `F821 Undefined name
+      # 'orig_len'` was a live crash in demo/benchmark.py that a catch-all
+      # `except` had been reporting as a skipped section.
+      - name: Lint (real defects only)
+        run: ruff check .
 
       - name: Smoke suite
         # Datasets are not available in CI. Every check is hermetic: the SFAF
-        # trainer guard points IOTIDS_DATASETS_ROOT at an empty directory, and
-        # checks needing a gitignored training artifact skip rather than fail.
+        # trainer guard and the dataset-fetch checks point
+        # IOTIDS_DATASETS_ROOT at a temp directory, and checks needing a
+        # gitignored training artifact skip rather than fail.
         run: pytest tests/ -v --tb=short
+
+      - name: Suite is hermetic (no external dataset drive)
+        # The suite must not depend on a mounted volume. If a check silently
+        # started reading the real Datasets/ tree, it would pass on the
+        # author's machine and fail — or worse, quietly change meaning — here.
+        run: |
+          test ! -e Datasets || { echo "Datasets/ present in CI checkout"; exit 1; }
+          ! grep -rn "/Volumes/" tests/ src/ code/ demo/ --include='*.py' \
+            || { echo "hardcoded /Volumes path in tracked code"; exit 1; }
 
       - name: Deployment artifacts match their contract
         run: |
@@ -60,3 +85,16 @@ jobs:
 
       - name: End-to-end demo (generate traffic, detect, validate)
         run: bash demo/run_demo.sh
+
+      # Runs after the demo, which generates data/pcaps/demo_mixed.pcap. The
+      # benchmark now exits non-zero if any section raised, so a section that
+      # breaks can no longer publish a report with a hole in it — which is
+      # exactly how a stale `read_pcap` signature shipped a
+      # "(section skipped — ValueError ...)" line into BENCHMARK.md.
+      - name: Benchmark runs with no failed sections
+        run: python demo/benchmark.py
+
+      - name: Benchmark report has no holes
+        run: |
+          ! grep -n "section FAILED" demo/results/BENCHMARK.md \
+            || { echo "benchmark published a failed section"; exit 1; }

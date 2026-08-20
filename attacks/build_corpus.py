@@ -165,8 +165,8 @@ def build(scenarios: int, out_dir: str, pcap_dir: str, mix_background: bool = Tr
     print(f"\nTotal flows: {len(df):,}  |  features: {N_FEATURES}"
           f"  |  scenarios: {df['scenario'].nunique():,}")
     if mix_background:
-        print(f"Background mixing ON — attack scenarios carry benign traffic so "
-              f"host-context features are measured against a realistic backdrop")
+        print("Background mixing ON — attack scenarios carry benign traffic so "
+              "host-context features are measured against a realistic backdrop")
         if total_ambiguous:
             print(f"  ({total_ambiguous} ambiguous flow key(s) dropped)")
     else:

@@ -189,7 +189,6 @@ def verify(meta):
 
     tmp = tempfile.mkdtemp(prefix="idsc_")
     shutil.copy(os.path.join(MODELS, "live_ids.h"), tmp)
-    nf = meta["n_features"]
     rows = "\n".join(
         "{" + ",".join("%.7ef" % v for v in row) + "}," for row in X)
     c = f"""#include <stdio.h>

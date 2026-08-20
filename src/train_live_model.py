@@ -227,7 +227,7 @@ def main():
     y_abl = abl.predict(X_te[:, keep])
     abl_acc = accuracy_score(y_te, y_abl)
     abl_f1 = f1_score(y_te, y_abl, average="macro")
-    print(f"\n── dst_port ablation ────────────────────────────────────────")
+    print("\n── dst_port ablation ────────────────────────────────────────")
     print(f"  with dst_port   : acc={acc:.4f}  macro-F1={macro_f1:.4f}")
     print(f"  without dst_port: acc={abl_acc:.4f}  macro-F1={abl_f1:.4f}")
     print(f"  delta           : acc={acc-abl_acc:+.4f}  macro-F1={macro_f1-abl_f1:+.4f}")
@@ -240,7 +240,7 @@ def main():
     if worst:
         print(f"  most port-dependent classes: {', '.join(worst)}")
     else:
-        print(f"  no class loses more than 0.02 F1 without the port")
+        print("  no class loses more than 0.02 F1 without the port")
 
     # ── Export ────────────────────────────────────────────────────────────────
     os.makedirs(MODELS, exist_ok=True)

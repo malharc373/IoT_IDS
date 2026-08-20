@@ -58,7 +58,6 @@ import shutil
 import ipaddress
 import subprocess
 import collections
-import datetime as dt
 
 NFT_TABLE = "iot_ids"
 NFT_BLOCK_SET = "blocked"

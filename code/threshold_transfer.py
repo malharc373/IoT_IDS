@@ -71,7 +71,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import multidataset as md  # noqa: E402
-from cross_dataset_eval import balanced, load_all, _fit, trivial_f1  # noqa: E402
+from cross_dataset_eval import load_all, _fit, trivial_f1  # noqa: E402
 
 RESULTS = os.path.join(ROOT, "demo", "results")
 RS = 42

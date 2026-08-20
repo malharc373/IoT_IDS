@@ -211,7 +211,7 @@ def main():
     best = dfres.iloc[0]
     base = dfres[dfres["transform"] == "raw_standard"].iloc[0]
     print("-" * 74)
-    print(f"\nRanked by ROC-AUC (threshold-free). Chance = 0.500, MCC chance = 0.000.")
+    print("\nRanked by ROC-AUC (threshold-free). Chance = 0.500, MCC chance = 0.000.")
     lift = best["roc_auc"] - base["roc_auc"]
     print(f"best: {best['transform']} AUC={best['roc_auc']:.3f} "
           f"(sd {best['roc_auc_std']:.3f} across {int(best['n_folds'])} folds, "

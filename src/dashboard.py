@@ -442,7 +442,7 @@ def main():
         url += f"/?token={token}"
     print(f"IoT-IDS dashboard → {url}  (reading {args.log})")
     if token:
-        print(f"  auth: token required on every request")
+        print("  auth: token required on every request")
     elif not _is_loopback(args.host):
         print("  auth: NONE — serving the alert feed to the network (--insecure)")
     print("Ctrl-C to stop")

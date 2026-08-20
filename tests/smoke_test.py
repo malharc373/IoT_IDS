@@ -11,7 +11,6 @@ import os
 import sys
 import io
 import json
-import glob
 import time
 import shutil
 import tempfile
@@ -943,6 +942,48 @@ def t_live_path():
     assert any(a["src_ip"] == "10.0.0.9" and a["kind"] != "benign" for a in inc), inc
 
 
+def t_flow_table_prune_bounds_memory():
+    """Every per-flow map must shrink when flows are evicted.
+
+    `prune()` used to clean `flows` and `active` but not `_gen`, which is keyed
+    by the bare 5-tuple. On a busy segment each ephemeral source port left a
+    permanent entry, so a sensor meant to run for weeks on a Pi grew without
+    bound even at a constant flow count (vault/Findings/F20).
+    """
+    import flow_features as ff
+    table = ff.FlowTable()
+    n = 5000
+    for i in range(n):
+        pkt = {"src_ip": "10.0.0.5", "dst_ip": "10.0.0.9",
+               "src_port": 1024 + (i % 60000), "dst_port": 80,
+               "proto": ff.PROTO_TCP, "flags": 0x02, "length": 60}
+        table.add_packet(pkt, ts=float(i))
+        if i % 100 == 0:
+            table.prune(older_than=10.0, now=float(i))
+    table.prune(older_than=10.0, now=float(n) + 1e6)
+    assert len(table.flows) == 0, len(table.flows)
+    assert len(table.active) == 0, len(table.active)
+    assert len(table._gen) == 0, (
+        f"_gen retained {len(table._gen)} entries after every flow was evicted "
+        f"— unbounded growth on a long-running sensor")
+
+
+def t_flow_reuse_still_generates_distinct_records():
+    """The leak fix must not break 5-tuple reuse after a teardown."""
+    import flow_features as ff
+    table = ff.FlowTable()
+
+    def syn(ts):
+        table.add_packet({"src_ip": "10.0.0.1", "dst_ip": "10.0.0.2",
+                          "src_port": 5000, "dst_port": 80,
+                          "proto": ff.PROTO_TCP, "flags": 0x02, "length": 60}, ts)
+
+    syn(0.0)
+    table.flows[next(iter(table.flows))].closed = True
+    syn(1.0)
+    assert len(table.flows) == 2, "a SYN after teardown must open a new record"
+
+
 def t_daemon_help():
     r = subprocess.run([sys.executable, os.path.join(ROOT, "src", "ids_daemon.py"), "--help"],
                        capture_output=True, text=True, env={**os.environ})
@@ -996,9 +1037,40 @@ def t_sfaf_onnx_export():
 
 
 def t_download_datasets_runs():
+    # Hermetic: point the script at an empty temp root rather than the real
+    # Datasets/ symlink, whose target lives on an external drive. The previous
+    # version inherited the ambient path, so the result depended on whether a
+    # USB volume happened to be mounted.
+    root = os.path.join(TMP, "ds_root")
+    os.makedirs(root, exist_ok=True)
+    # --check-only so an empty root reports what is missing instead of trying
+    # to download it; without this the "hermetic" test hit the network.
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "code", "download_datasets.py"),
+                        "--check-only"],
+                       capture_output=True, text=True,
+                       env={**os.environ, "IOTIDS_DATASETS_ROOT": root})
+    assert r.returncode == 0 and "layout" in r.stdout.lower(), r.stdout + r.stderr
+    assert "missing" in r.stdout.lower(), r.stdout
+
+
+def t_download_datasets_dangling_symlink():
+    """A symlinked dataset root whose volume is unmounted must explain itself.
+
+    `os.makedirs(exist_ok=True)` raises FileExistsError on a broken symlink, so
+    the documented entry point used to die with a bare traceback whenever the
+    external drive was unplugged (vault/Findings/F21).
+    """
+    link = os.path.join(TMP, "dangling_ds")
+    if os.path.islink(link):
+        os.unlink(link)
+    os.symlink(os.path.join(TMP, "no_such_volume"), link)
     r = subprocess.run([sys.executable, os.path.join(ROOT, "code", "download_datasets.py")],
-                       capture_output=True, text=True, env={**os.environ})
-    assert r.returncode == 0 and "layout" in r.stdout.lower()
+                       capture_output=True, text=True,
+                       env={**os.environ, "IOTIDS_DATASETS_ROOT": link})
+    out = r.stdout + r.stderr
+    assert r.returncode != 0, "a dangling dataset root must fail, not proceed"
+    assert "Traceback" not in out, f"crashed instead of explaining:\n{out}"
+    assert "not mounted" in out and "IOTIDS_DATASETS_ROOT" in out, out
 
 
 # ── 8. shell scripts syntax ───────────────────────────────────────────────────
@@ -1017,6 +1089,59 @@ def t_benchmark_params():
     meta, sizes, n_trees, n_nodes = b.bench_params()
     assert n_trees > 0 and n_nodes > 0
     assert "live_ids.onnx" in sizes and sizes["live_ids.onnx"] > 0
+
+
+def t_no_retracted_numbers_in_live_docs():
+    """Retracted headline figures must not reappear outside legacy/.
+
+    The pre-remediation study reported a +56.59 pp "generalisation gain" and
+    92.68% on UNSW-NB15, both produced by the broken feature alignment (F01)
+    and an F1-only metric that cannot separate transfer from an all-attack
+    classifier (F02). Those files now live under legacy/ with a retraction
+    notice; this check keeps them from being copied back into live prose.
+    """
+    retracted = ["56.59", "92.68"]
+    live_docs = []
+    for base, dirs, files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs
+                   if d not in {".git", "legacy", "Literature", "Datasets",
+                                "__pycache__", "vault", "node_modules"}]
+        for fn in files:
+            if fn.endswith(".md"):
+                live_docs.append(os.path.join(base, fn))
+    offenders = []
+    for path in live_docs:
+        try:
+            txt = open(path, encoding="utf-8", errors="ignore").read()
+        except OSError:
+            continue
+        for needle in retracted:
+            if needle in txt:
+                offenders.append(f"{os.path.relpath(path, ROOT)}: {needle}")
+    assert not offenders, (
+        "retracted pre-remediation figures found in live documentation "
+        f"(they belong only under legacy/): {offenders}")
+
+
+def t_benchmark_extraction_section_runs():
+    """Section 4 must actually produce numbers, not a swallowed exception.
+
+    `read_pcap` gained a third return value (orig_len, for snaplen handling)
+    and `bench_extract` was never updated, so it raised ValueError on every
+    run. A catch-all in `_guard` rendered that as "(section skipped — ...)" and
+    a published BENCHMARK.md shipped with the hole (vault/Findings/F22).
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "bench_x", os.path.join(ROOT, "demo", "benchmark.py"))
+    b = importlib.util.module_from_spec(spec); spec.loader.exec_module(b)
+    if not os.path.exists(os.path.join(ROOT, "data", "pcaps", "demo_mixed.pcap")):
+        raise SkipTest("no demo pcap — run demo/run_demo.sh first")
+    res = b.bench_extract()
+    assert res is not None, "bench_extract returned nothing"
+    npk, n_flows, t_proc = res
+    assert npk > 0 and n_flows > 0 and t_proc > 0, res
+    assert not b.FAILED_SECTIONS, b.FAILED_SECTIONS
 
 
 def t_systemd_unit_sane():
@@ -1067,8 +1192,13 @@ TESTS = [
         ("SFAF trainer guard", t_sfaf_trainer_guard),
         ("SFAF onnx export", t_sfaf_onnx_export),
         ("download_datasets runs", t_download_datasets_runs),
+        ("download datasets dangling symlink", t_download_datasets_dangling_symlink),
+        ("flow table prune bounds memory", t_flow_table_prune_bounds_memory),
+        ("flow reuse distinct records", t_flow_reuse_still_generates_distinct_records),
         ("shell script syntax", t_shell_syntax),
         ("benchmark params", t_benchmark_params),
+        ("benchmark extraction section runs", t_benchmark_extraction_section_runs),
+        ("no retracted numbers in live docs", t_no_retracted_numbers_in_live_docs),
         ("systemd unit sane", t_systemd_unit_sane),]
 
 

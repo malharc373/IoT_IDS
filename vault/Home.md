@@ -22,6 +22,7 @@ Repo: `/Users/malharfalke/IOT-IDS` · remote `github.com/malharc373/IoT_IDS`
 - [[Project Overview]] — what the two halves of the project are and how they fit
 - [[Review 2026-08-19]] — the full code/research review that started this work
 - [[Remediation Log]] — running log of every fix, in order, with commits
+- [[Review 2026-08-21]] — second pass: did the remediation hold? (yes, plus four new findings)
 
 ## Findings (problems identified)
 
@@ -54,6 +55,12 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 - [[F18 - Pipeline ONNX export silently ships a broken model]]
 - [[F19 - IoT-23 labels parsed as all-benign]]
 
+### Found verifying the remediation ([[Review 2026-08-21]])
+- [[F20 - FlowTable generation map grows without bound]] — significant
+- [[F22 - Benchmark published a report with a hole in it]] — significant
+- [[F23 - Retracted thesis numbers still shipped as current]] — significant
+- [[F21 - Dataset entry point dies on an unmounted drive]] — moderate
+
 ## Experiments
 
 - [[EXP01 - Cross-dataset study baseline]] — the numbers as they stood pre-fix
@@ -69,7 +76,8 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 
 ## Current state
 
-- 19 findings: 18 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
-- Test suite **40 passed / 0 failed** (was 23/1 before the review)
+- 23 findings: 22 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
+- Test suite **45 passed / 0 failed** (was 23/1 before the first review), plus
+  `ruff` in CI and a benchmark that exits non-zero on a failed section
 - Headline research number corrected: cross-domain **ROC-AUC 0.509** against a
   chance baseline of 0.500 over 110 dataset pairs — see [[EXP02 - Corrected alignment rerun]]

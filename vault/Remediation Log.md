@@ -33,9 +33,21 @@ Work done against [[Review 2026-08-19]], in order. Branch
 | F17 | [[F17 - Documentation inconsistencies]] | moderate | fixed |
 | F18 | [[F18 - Pipeline ONNX export silently ships a broken model]] | critical | fixed — *found during remediation* |
 | F19 | [[F19 - IoT-23 labels parsed as all-benign]] | critical | fixed — *found during remediation* |
+| F20 | [[F20 - FlowTable generation map grows without bound]] | significant | fixed — *found verifying the remediation* |
+| F21 | [[F21 - Dataset entry point dies on an unmounted drive]] | moderate | fixed — *found verifying the remediation* |
+| F22 | [[F22 - Benchmark published a report with a hole in it]] | significant | fixed — *found verifying the remediation* |
+| F23 | [[F23 - Retracted thesis numbers still shipped as current]] | significant | fixed — *found verifying the remediation* |
 
 Test suite: **23 passed / 1 failed** before → **40 passed / 0 failed** after,
 runnable under both the standalone runner and pytest, with CI on every push.
+The [[Review 2026-08-21]] pass took it to **45 passed / 0 failed** and added
+`ruff` to CI.
+
+> [!note] F20–F23 were found two days later, verifying this work.
+> Three of the four are this remediation's own footprint — new state that was
+> never wired into the lifecycle bounding it, a signature change with a caller
+> left behind, and a correction that produced new numbers without retiring the
+> old ones. See [[Review 2026-08-21]].
 
 ## Commits
 

@@ -104,12 +104,21 @@ cannot honour any confidence gate ([[F16 - Moderate issues roundup]] item 7).
 Emitting the margin, or a fixed-point softmax, would let the MCU apply the same
 policy as the Python path.
 
-### ~~10. CI + pytest~~ — **done**
+### ~~10. CI + pytest~~ — **done**, and extended 2026-08-21
 
 `tests/test_suite.py` parametrizes pytest over the same registry the standalone
 runner uses, and `.github/workflows/ci.yml` runs the suite, an artifact-contract
 assertion, a gcc compile-and-run of the C model, and the end-to-end demo on
 every push.
+
+Extended after [[Review 2026-08-21]]: `ruff check .` (pyflakes rules only — it
+is what found [[F22 - Benchmark published a report with a hole in it]]), a
+benchmark run that fails the build on a failed section, hermeticity assertions
+(no `Datasets/` in the checkout, no `/Volumes/` path in tracked code), and
+`concurrency: cancel-in-progress`.
+
+Still missing: a type checker, and a scheduled run so bit-rot surfaces without
+a push.
 
 ### ~~11. Drop the scaler from the SFAF edge model too~~ — **done**
 
@@ -125,6 +134,21 @@ live model.
 - per-class alert thresholds instead of one global `--min-conf`
 - an ESP32 flash-and-run example in `deploy/README_MCU.md`
 
+### 13. Assert the auxiliary state, not just the outputs
+
+[[F20 - FlowTable generation map grows without bound]] was invisible to a
+40-check suite because every check asserted on flow counts and feature values,
+never on the size of the bookkeeping maps. A long-running-sensor soak check —
+run N thousand connections through `FlowTable`, prune, assert every map is
+bounded — would catch the whole class. The single test added covers `_gen`;
+the general property does not yet have a harness.
+
+### 14. Real Pi measurement now has a second reason
+
+Beyond replacing `PI_FACTOR = 12.0` (item 7), a multi-hour run on real hardware
+is the only thing that would have surfaced F20 without reading the code. A soak
+test is the cheap proxy; the Pi is the real one.
+
 ## Related
 
-[[Home]] · [[Remediation Log]] · [[Review 2026-08-19]]
+[[Home]] · [[Remediation Log]] · [[Review 2026-08-19]] · [[Review 2026-08-21]]

@@ -248,9 +248,11 @@ code/
   threshold_transfer.py how many labelled target flows fix the operating point
   02_train_sfaf.py     headless SFAF reproduction (regenerates thesis artifacts)
   download_datasets.py dataset fetch (Kaggle + auth-free direct URLs)
-  *.ipynb              EDA / SFAF / edge-deployment notebooks (historical
-                       record of the thesis work; the .py scripts above are the
-                       runnable, maintained versions)
+legacy/                superseded work, kept for the record — see
+                       legacy/README.md. Nothing here is current: the
+                       pre-2026-08-19 result artifacts (invalidated by the
+                       feature-alignment and metric findings) and the three
+                       original notebooks.
 models/
   live_ids.onnx        deployable edge model (~96 KB, raw features — trees are
                        scale-invariant, so there is no scaler to drift)

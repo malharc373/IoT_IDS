@@ -24,7 +24,6 @@ import json
 import time
 import platform
 import subprocess
-import statistics as st
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -79,7 +78,7 @@ def bench_params():
         leaf = f" / {n_leaves:,} leaves" if n_leaves else ""
         out(f"  Total nodes            : {n_nodes:,}{leaf}")
     else:
-        out(f"  Boosted trees / nodes  : (xgboost not installed — skipped)")
+        out("  Boosted trees / nodes  : (xgboost not installed — skipped)")
     out(f"  ONNX model size        : {sizes['live_ids.onnx']/1024:.1f} KB")
     if "live_ids.h" in sizes:
         cd = f" (~{n_nodes*16//1024} KB const data)" if n_nodes else ""
@@ -145,20 +144,20 @@ def bench_c(nf):
     import tempfile
     tmp = tempfile.mkdtemp()
     shutil.copy(hdr, tmp)
-    prog = f"""#include <stdio.h>
+    prog = """#include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
 #include "live_ids.h"
-int main(){{
+int main(){
   int N=200000; float x[IDS_NUM_FEATURES];
   for(int i=0;i<IDS_NUM_FEATURES;i++) x[i]=(float)(rand()%1000)/100.0f;
   volatile int s=0;
   struct timespec a,b; clock_gettime(CLOCK_MONOTONIC,&a);
-  for(int i=0;i<N;i++){{ x[i%IDS_NUM_FEATURES]+=0.001f; s+=ids_predict(x); }}
+  for(int i=0;i<N;i++){ x[i%IDS_NUM_FEATURES]+=0.001f; s+=ids_predict(x); }
   clock_gettime(CLOCK_MONOTONIC,&b);
   double ns=((b.tv_sec-a.tv_sec)*1e9+(b.tv_nsec-a.tv_nsec))/N;
   printf("%.3f\\n", ns); return s&0;
-}}"""
+}"""
     open(os.path.join(tmp, "b.c"), "w").write(prog)
     subprocess.run([cc, "-O3", "-I", tmp, "-o", os.path.join(tmp, "b"),
                     os.path.join(tmp, "b.c")], check=True)
@@ -167,7 +166,7 @@ int main(){{
     shutil.rmtree(tmp, ignore_errors=True)
     out(f"  C ids_predict latency  : {ns:.1f} ns/flow ({ns/1000:.3f} us)")
     out(f"  C throughput           : {1e9/ns:,.0f} flows/s (single thread)")
-    out(f"  runtime deps           : none (pure C99, ~130 B stack)")
+    out("  runtime deps           : none (pure C99, ~130 B stack)")
     return ns
 
 
@@ -183,7 +182,7 @@ def bench_extract():
     t_read = time.perf_counter() - t0
     t0 = time.perf_counter()
     table = FlowTable(); npk = 0
-    for ts, raw in recs:
+    for ts, raw, orig_len in recs:
         pk = parse_raw(raw, orig_len)
         if pk: table.add_packet(pk, ts); npk += 1
     flows = table.extract(min_pkts=1)
@@ -223,10 +222,6 @@ def bench_e2e():
 # ── 6. accuracy (held-out) ────────────────────────────────────────────────────
 def bench_accuracy():
     section("6. ACCURACY (held-out, unseen-seed synthetic)")
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "val", os.path.join(ROOT, "demo", "validate.py"))
-    val = importlib.util.module_from_spec(spec)
     from ids_daemon import Detector
     import traffic_gen as tg
     from flow_features import FlowTable, parse_raw
@@ -276,9 +271,33 @@ def bench_accuracy():
         if m.any():
             out(f"    {k:<16} {_recall(m, yp == i)*100:5.1f}%")
     out("\n  NOTE: synthetic traffic is separable; see CROSS_DATASET_FINDINGS.md")
-    out("        for the honest cross-dataset numbers: in-domain ROC-AUC 0.996 vs")
-    out("        cross-domain 0.514 against a chance baseline of 0.500 (MCC -0.002).")
+    for line in _cross_dataset_note():
+        out(f"        {line}")
     return acc, mf1, det_rate, fpr
+
+
+def _cross_dataset_note():
+    """Read the cross-dataset headline out of the results CSV.
+
+    These two lines were hardcoded, so they still quoted the ten-dataset run
+    (AUC 0.514, MCC -0.002) after the study was rerun on eleven datasets
+    (0.509 / -0.007) — a stale number in a generated report, which is the class
+    of problem this whole benchmark exists to avoid (vault/Findings/F22).
+    """
+    csv_path = os.path.join(RESULTS, "cross_dataset_metrics_long.csv")
+    if not os.path.exists(csv_path):
+        return ["for the honest cross-dataset numbers (results CSV not present)."]
+    import pandas as pd
+    df = pd.read_csv(csv_path)
+    dia, off = df[df["in_domain"]], df[~df["in_domain"]]
+    n_ds = df["train"].nunique()
+    return [
+        f"for the honest cross-dataset numbers, over {n_ds} datasets "
+        f"({len(off)} ordered pairs):",
+        f"in-domain ROC-AUC {dia['roc_auc'].mean():.3f} vs cross-domain "
+        f"{off['roc_auc'].mean():.3f} against a chance baseline of 0.500",
+        f"(cross-domain MCC {off['mcc'].mean():+.3f}, chance 0.000).",
+    ]
 
 
 # ── 7. memory ─────────────────────────────────────────────────────────────────
@@ -307,8 +326,8 @@ def bench_memory():
     import psutil
     out(f"  benchmark process RSS  : {psutil.Process().memory_info().rss/1e6:.1f} MB "
         f"(harness — imports pandas/xgboost; NOT the daemon)")
-    out(f"  edge runtime deps      : onnxruntime + numpy (+ scapy for live sniff)")
-    out(f"  MCU C model RAM        : ~130 bytes stack, 0 heap")
+    out("  edge runtime deps      : onnxruntime + numpy (+ scapy for live sniff)")
+    out("  MCU C model RAM        : ~130 bytes stack, 0 heap")
     return rss
 
 
@@ -341,14 +360,29 @@ def _is_pi():
         platform.system() == "Linux"
 
 
+FAILED_SECTIONS = []
+
+
 def _guard(fn, *a):
-    """Run a benchmark section; skip (don't abort) if an optional dep is missing."""
+    """Run a benchmark section.
+
+    A missing *optional dependency* is a legitimate skip: the section cannot
+    run on this host and nothing is wrong with the code. Anything else is a
+    bug, and used to be swallowed by the same "(section skipped — ...)" line —
+    which is how a `ValueError: too many values to unpack`, caused by
+    `read_pcap` gaining a third return value, shipped into a published
+    BENCHMARK.md as a skipped section for a full day (vault/Findings/F22).
+
+    Real failures are now recorded and reported, and `main()` exits non-zero,
+    so the benchmark cannot quietly publish a report with a hole in it.
+    """
     try:
         return fn(*a)
     except ImportError as e:
         out(f"  (section skipped — missing dependency: {e.name or e})")
     except Exception as e:
-        out(f"  (section skipped — {type(e).__name__}: {e})")
+        out(f"  (section FAILED — {type(e).__name__}: {e})")
+        FAILED_SECTIONS.append(f"{fn.__name__}: {type(e).__name__}: {e}")
     return None
 
 
@@ -373,6 +407,12 @@ def main():
         f.write("# IoT-IDS system benchmark\n\n```\n" + "\n".join(REPORT) + "\n```\n")
     _guard(_latency_chart, lat)
     out(f"\nwrote {os.path.join(RESULTS, 'BENCHMARK.md')}")
+    if FAILED_SECTIONS:
+        print("\n[ERROR] benchmark sections failed — the report above is "
+              "incomplete:", file=sys.stderr)
+        for s in FAILED_SECTIONS:
+            print(f"  - {s}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _latency_chart(lat):

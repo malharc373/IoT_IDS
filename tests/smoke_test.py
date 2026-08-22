@@ -1467,6 +1467,26 @@ def t_current_claims_are_evidence_scoped():
         assert supported in readme, f"README lost evidence/scope marker: {supported}"
 
 
+def t_repository_governance_contract():
+    """Security/data/model policy and minimum-permission CI remain present."""
+    for rel in ["SECURITY.md", "CONTRIBUTING.md", "docs/DATA_CARD.md",
+                "models/README.md", ".github/dependabot.yml"]:
+        path = os.path.join(ROOT, rel)
+        assert os.path.isfile(path) and os.path.getsize(path) > 100, rel
+
+    workflow = open(os.path.join(ROOT, ".github", "workflows", "ci.yml"),
+                    encoding="utf-8").read()
+    assert "permissions:\n  contents: read" in workflow
+    assert "branches: [main, \"fix/**\", \"feat/**\"]" not in workflow
+    assert "pull_request:" in workflow and "schedule:" in workflow
+    uses = [line.split("uses:", 1)[1].strip().split()[0]
+            for line in workflow.splitlines() if "uses:" in line]
+    assert uses
+    for action in uses:
+        ref = action.rsplit("@", 1)[-1]
+        assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref), action
+
+
 def t_benchmark_extraction_section_runs():
     """Section 4 must actually produce numbers, not a swallowed exception.
 
@@ -1557,6 +1577,7 @@ TESTS = [
         ("benchmark extraction section runs", t_benchmark_extraction_section_runs),
         ("no retracted numbers in live docs", t_no_retracted_numbers_in_live_docs),
         ("current claims are evidence scoped", t_current_claims_are_evidence_scoped),
+        ("repository governance contract", t_repository_governance_contract),
         ("systemd unit sane", t_systemd_unit_sane),]
 
 

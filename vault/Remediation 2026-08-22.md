@@ -59,7 +59,7 @@ records the test evidence and commit that closed it.
 | R20 | P1 | Reconcile README, vault, daemon, model-card claims | verified | claim guard + full suite |
 | R21 | P2 | Add real labelled-traffic and group-split experiments | blocked externally | dataset/hardware |
 | R22 | P2 | Run actual Raspberry Pi performance/soak measurements | blocked externally | Pi required |
-| R23 | P1 | Add license, model/data cards, branch protection, security settings | open | GitHub access needed |
+| R23 | P1 | Add license, model/data cards, branch protection, security settings | partial; owner decision | controls verified; license choice pending |
 | R24 | P2 | Remove historical large binaries from Git history | decision required | coordinated rewrite |
 
 ## Execution log
@@ -365,6 +365,35 @@ Evidence:
 pytest tests/test_suite.py -q  -> 59 passed in 13.32s
 ruff check .                  -> All checks passed
 git diff --check              -> clean
+```
+
+### 2026-08-22 — R23 governance controls applied; license pending
+
+Local policy now includes a security policy, contribution rules, a complete
+live model card, a two-domain data card, monthly Dependabot configuration, and
+a governance regression. CI no longer runs duplicate branch-push and PR jobs;
+it also runs weekly, has read-only contents permission, and pins GitHub-owned
+actions to full commit SHAs.
+
+Authenticated GitHub API access was available. The following remote controls
+were enabled and read back: vulnerability alerts, automated security fixes,
+private vulnerability reporting, GitHub-owned Actions only, mandatory SHA
+pinning, and `main` protection. `main` now requires an up-to-date `test` check,
+a pull request, linear history, resolved conversations, admin enforcement, and
+disallows force pushes and deletion. The repository description was corrected
+to remove an unvalidated Raspberry Pi deployment claim. Full state and rationale
+are in [[Repository Governance]].
+
+The remaining R23 item is intentionally not guessed: selecting an open-source
+license grants legal rights. The owner must choose the license explicitly.
+
+Evidence:
+
+```text
+pytest tests/test_suite.py -q    -> 60 passed in 13.34s
+ruff check .                    -> All checks passed
+workflow + Dependabot YAML      -> parsed successfully
+GitHub protection/settings API  -> applied and read back
 ```
 
 ## External blockers and boundaries

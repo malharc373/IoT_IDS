@@ -113,6 +113,17 @@ evidence-scoped replacements:
 Regenerate the report with the bundled ReportLab-capable Python runtime (or any
 environment with ReportLab) using `python reports/build_report.py`.
 
+### Governance and responsible use
+
+- [`SECURITY.md`](SECURITY.md) — private vulnerability reporting and operational cautions
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — verification and evidence rules
+- [`models/README.md`](models/README.md) — live/research model cards and artifact contract
+- [`docs/DATA_CARD.md`](docs/DATA_CARD.md) — provenance, limitations, privacy and missing acceptance data
+
+No open-source license has been selected yet. The absence of a license means no
+permission to copy, modify, or redistribute is granted; the owner must make an
+explicit license decision before outside contributions or reuse.
+
 ## Configuration
 
 Optional settings live in a git-ignored `.env` (copy the template):

@@ -59,7 +59,7 @@ a token or an explicit acknowledgement — the process refuses to start otherwis
         addressing of the monitored segment.
         Pick one:
           --token generate      mint a token and print the URL
-          --token <secret>      use your own
+          --token-file PATH     read a private token file
           --host 127.0.0.1      keep it local, reach it over an SSH tunnel:
                                   ssh -L 8080:127.0.0.1:8080 pi@<host>
           --insecure            you have read the above and accept it

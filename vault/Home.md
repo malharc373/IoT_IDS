@@ -23,6 +23,7 @@ Repo: `/Users/malharfalke/IOT-IDS` · remote `github.com/malharc373/IoT_IDS`
 - [[Review 2026-08-19]] — the full code/research review that started this work
 - [[Remediation Log]] — running log of every fix, in order, with commits
 - [[Review 2026-08-21]] — second pass: did the remediation hold? (yes, plus four new findings)
+- [[Remediation 2026-08-22]] — active post-review implementation backlog and evidence log
 
 ## Findings (problems identified)
 
@@ -81,3 +82,8 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
   `ruff` in CI and a benchmark that exits non-zero on a failed section
 - Headline research number corrected: cross-domain **ROC-AUC 0.509** against a
   chance baseline of 0.500 over 110 dataset pairs — see [[EXP02 - Corrected alignment rerun]]
+
+> [!warning] Independent review on 2026-08-22 reopened correctness, deployment,
+> research-methodology and governance work. The active status is maintained in
+> [[Remediation 2026-08-22]]; the 23-finding count above describes the earlier
+> review cycle, not the current readiness verdict.

@@ -299,8 +299,18 @@ font-weight:600;color:#0b0b0b}
 <script>
 const $=id=>document.getElementById(id);
 function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+// The first page request may authenticate with ?token=... . Preserve that
+// credential for same-tab API polling, then remove it from the visible URL so
+// it is not left in browser history or copied accidentally.
+const authParam=new URLSearchParams(location.search).get('token');
+if(authParam){
+ sessionStorage.setItem('iotids.dashboard.auth',authParam);
+ history.replaceState(null,'',location.pathname);
+}
+const authToken=sessionStorage.getItem('iotids.dashboard.auth')||'';
 async function tick(){
- let s; try{s=await (await fetch('/api/state')).json()}catch(e){$('gen').textContent='offline';return}
+ const opts=authToken?{headers:{'X-Auth-Token':authToken}}:{};
+ let s; try{s=await (await fetch('/api/state',opts)).json()}catch(e){$('gen').textContent='offline';return}
  const C=s.colors;
  $('gen').textContent='updated '+s.generated.replace('T',' ');
  $('t_inc').textContent=s.totals.incidents;
@@ -427,7 +437,7 @@ def main():
             f"        addressing of the monitored segment.\n"
             f"        Pick one:\n"
             f"          --token generate      mint a token and print the URL\n"
-            f"          --token <secret>      use your own\n"
+            f"          --token-file PATH     read a private token file\n"
             f"          --host 127.0.0.1      keep it local, reach it over an SSH tunnel:\n"
             f"                                  ssh -L {args.port}:127.0.0.1:{args.port} pi@<host>\n"
             f"          --insecure            you have read the above and accept it")

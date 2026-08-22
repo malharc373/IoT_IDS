@@ -15,6 +15,10 @@ set -euo pipefail
 
 IFACE="${1:-eth0}"
 DASH_PORT="${2:-8080}"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+RUN_USER="${SUDO_USER:-$(whoami)}"
+VENV="$REPO_DIR/.venv"
+PY="$VENV/bin/python"
 # The dashboard exposes the alert feed (attacking hosts, blocked hosts, segment
 # addressing), so reaching it over the LAN requires a token. Reuse the existing
 # one across re-runs so bookmarked URLs keep working.
@@ -23,7 +27,7 @@ DASH_PORT="${2:-8080}"
 # systemd unit via Environment= (units are world-readable and the value shows up
 # in `systemctl show`) and not passed as an argument (visible to any local user
 # in `ps`). The service reads it with --token-file.
-TOKEN_FILE="$(cd "$(dirname "$0")/.." && pwd)/logs/dashboard.token"
+TOKEN_FILE="${IOTIDS_DASHBOARD_TOKEN_FILE:-$REPO_DIR/logs/dashboard.token}"
 mkdir -p "$(dirname "$TOKEN_FILE")"
 if [ -s "$TOKEN_FILE" ]; then
     DASH_TOKEN="$(cat "$TOKEN_FILE")"
@@ -33,10 +37,12 @@ else
     chmod 600 "$TOKEN_FILE"
 fi
 chown "$RUN_USER" "$TOKEN_FILE" 2>/dev/null || true
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-RUN_USER="${SUDO_USER:-$(whoami)}"
-VENV="$REPO_DIR/.venv"
-PY="$VENV/bin/python"
+
+# CI exercises this initialization under `set -u` without installing packages
+# or writing systemd units. It also gives operators a safe configuration check.
+if [ "${IOTIDS_SETUP_PREFLIGHT_ONLY:-0}" = "1" ]; then
+    exit 0
+fi
 
 echo "=== IoT-IDS Pi setup ==="
 echo "  repo      : $REPO_DIR"

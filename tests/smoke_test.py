@@ -590,6 +590,11 @@ def t_dashboard_auth_and_binding():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     port = srv.server_address[1]
     try:
+        page = urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/?token={tok}", timeout=3).read().decode()
+        assert "X-Auth-Token" in page and "sessionStorage" in page, (
+            "authenticated page does not propagate auth to its API polls")
+        assert "history.replaceState" in page, "token remains in the visible URL"
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/api/state", timeout=3)
             raise AssertionError("served without a token")
@@ -1081,6 +1086,23 @@ def t_shell_syntax():
         assert r.returncode == 0, f"{sh}: {r.stderr}"
 
 
+def t_setup_pi_strict_preflight():
+    """The installer initialises safely under `set -u` before side effects.
+
+    `RUN_USER` used to be expanded by chown two lines before it was assigned,
+    so a fresh Pi install exited before reaching the first progress message.
+    Syntax-only CI cannot catch an unbound-variable runtime failure.
+    """
+    token_file = os.path.join(TMP, "setup-preflight.token")
+    env = {**os.environ,
+           "IOTIDS_SETUP_PREFLIGHT_ONLY": "1",
+           "IOTIDS_DASHBOARD_TOKEN_FILE": token_file}
+    r = subprocess.run(["bash", os.path.join(ROOT, "deploy", "setup_pi.sh")],
+                       capture_output=True, text=True, env=env, timeout=30)
+    assert r.returncode == 0, r.stderr
+    assert os.path.exists(token_file) and os.path.getsize(token_file) > 0
+
+
 def t_benchmark_params():
     # the benchmark's param/footprint section must run (fast, no full sweep)
     import importlib.util
@@ -1196,6 +1218,7 @@ TESTS = [
         ("flow table prune bounds memory", t_flow_table_prune_bounds_memory),
         ("flow reuse distinct records", t_flow_reuse_still_generates_distinct_records),
         ("shell script syntax", t_shell_syntax),
+        ("Pi setup strict preflight", t_setup_pi_strict_preflight),
         ("benchmark params", t_benchmark_params),
         ("benchmark extraction section runs", t_benchmark_extraction_section_runs),
         ("no retracted numbers in live docs", t_no_retracted_numbers_in_live_docs),

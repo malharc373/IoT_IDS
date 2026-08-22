@@ -44,9 +44,9 @@ records the test evidence and commit that closed it.
 | R05 | P1 | Honor classic-pcap nanosecond timestamp resolution | verified | 0.1 s ns-PCAP regression |
 | R06 | P1 | Respect capture link type; reject unsupported types safely | verified | Ethernet validation + SLL rejection |
 | R07 | P1 | Parse fragments and IPv6 extension headers safely | verified | IPv4/IPv6 fragment regressions |
-| R08 | P1 | Bound live incident suppression state (`seen`) | open | pending |
-| R09 | P1 | Refresh IPS firewall timeout and persisted state | open | pending |
-| R10 | P1 | Make nft throttling per-source rather than shared | open | pending |
+| R08 | P1 | Bound live incident suppression state (`seen`) | verified | lifecycle + 10k-key regression |
+| R09 | P1 | Refresh IPS firewall timeout and persisted state | verified | memory/disk/backend regression |
+| R10 | P1 | Make nft throttling per-source rather than shared | verified | meter grammar + ruleset regression |
 | R11 | P0 | Remove in-domain resubstitution from cross-dataset evaluation | open | rerun required |
 | R12 | P1 | Account for rows dropped by feature completeness policy | open | pending |
 | R13 | P1 | Make Bot-IoT sampling memory-bounded and representative | open | pending |
@@ -134,6 +134,34 @@ New ONNX SHA-256:
 > synthetic generator, not real-network generalisation. R21 remains open. Also,
 > a capture that begins midstream without a handshake cannot prove connection
 > initiator; the first observed sender is explicitly a fallback, not certainty.
+
+### 2026-08-22 — R08–R10 verified
+
+- **R08:** replay and live paths now use `IncidentWatermarks`. Its state is
+  retained only for source/type pairs present in the current classified window.
+  Once an incident disappears, a later two-flow recurrence alerts even if an
+  old incident from that source had 1,000 flows. A 10,000-key regression prunes
+  back to the ten active keys.
+- **R09:** a repeated sighting of an active block now updates the reason and
+  deadline, persists `ips_state.json`, and refreshes the nft set element with
+  an atomic `nft -f` delete/add batch (the CLI has no `update element` command).
+  Iptables continues to use the refreshed userspace
+  deadline because its rule has no kernel timeout. The test fixes time at 1,000
+  and 1,030 seconds and verifies the stored/kernel refresh deadline is 1,090.
+- **R10:** the nft throttle rule now uses a named meter keyed by `ip saddr` or
+  `ip6 saddr`, with unique meters per hook and address family. Each throttled
+  source therefore owns a token bucket; one noisy source cannot consume a
+  single global allowance for every other source. Grammar was checked against
+  the nftables project documentation:
+  <https://wiki.nftables.org/wiki-nftables/index.php/Meters>.
+
+Evidence:
+
+```text
+pytest tests/ -q  -> 51 passed in 13.83s
+ruff check .      -> All checks passed
+git diff --check  -> clean
+```
 
 ## External blockers and boundaries
 

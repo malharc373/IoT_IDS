@@ -532,10 +532,63 @@ def t_ips_scope_and_idempotence():
     assert "hook input" in n and "hook forward" in n, "network scope missing FORWARD"
     # rate-limit tier exists in the ruleset, not just in the docs
     assert NFT_THROTTLE_SET in n and "limit rate over" in n
+    assert "meter throttle_input_v4 { ip saddr limit rate over" in n
+    assert "meter throttle_forward_v6 { ip6 saddr limit rate over" in n
     assert NFT_BLOCK_SET in n and f"table inet {NFT_TABLE}" in n
     # declarative: applied after a flush, so re-running cannot accumulate rules
     assert n.count("hook forward") == 1
     assert net.status()["protects"] == "this sensor + forwarded traffic"
+
+
+def t_ips_refreshes_block_deadline():
+    """An already-blocked sighting refreshes memory, disk and nft timeout."""
+    import json as _json
+    from unittest.mock import patch
+    from ips_response import Responder
+
+    state = os.path.join(TMP, "refresh_state.json")
+    r = Responder(mode="dry-run", backend="nftables", strikes=1,
+                  block_seconds=60, state_path=state)
+    with patch("ips_response.time.time", return_value=1000.0):
+        assert r.handle("203.0.113.40", "portscan", 0.99)["action"] == "would-block"
+
+    calls = []
+    r.effective_enforce = True
+    r._refresh_block = lambda ip: calls.append(ip)
+    with patch("ips_response.time.time", return_value=1030.0):
+        assert r.handle("203.0.113.40", "mirai", 0.99)["action"] == "already-blocked"
+    saved = _json.load(open(state))["active"]["203.0.113.40"]
+    assert saved == {"until": 1090.0, "kind": "mirai"}, saved
+    assert calls == ["203.0.113.40"], "firewall timeout was not refreshed"
+
+    # nft has no imperative `update element` command; refresh is an atomic
+    # delete+add batch, not two subprocesses with an unblocked gap.
+    nft = Responder(mode="dry-run", backend="nftables", strikes=1,
+                    block_seconds=60, state_path=os.path.join(TMP, "nft.json"))
+    ran = []
+    nft._run = lambda args, stdin=None: ran.append((args, stdin)) or True
+    nft._refresh_block("203.0.113.41")
+    assert ran[0][0] == ["nft", "-f", "-"]
+    assert "delete element" in ran[0][1] and "add element" in ran[0][1]
+    assert "timeout 60s" in ran[0][1]
+
+
+def t_incident_watermarks_are_bounded():
+    """A disappeared incident cannot suppress a smaller future incident."""
+    from ids_daemon import IncidentWatermarks
+    marks = IncidentWatermarks()
+    old = ("203.0.113.1", "portscan")
+    assert marks.should_emit(old, 1000)
+    assert not marks.should_emit(old, 1001)
+    marks.retain(set())
+    assert not marks.counts
+    assert marks.should_emit(old, 2), "stale watermark suppressed a new incident"
+
+    for i in range(10_000):
+        marks.should_emit((f"198.51.100.{i}", "synflood"), 1)
+    live = {(f"198.51.100.{i}", "synflood") for i in range(10)}
+    marks.retain(live)
+    assert len(marks.counts) == len(live)
 
 
 def t_c_export():
@@ -1279,6 +1332,8 @@ TESTS = [
         ("model artifacts", t_model_artifacts),
         ("ips responder ladder", t_ips_responder),
         ("ips scope + nft idempotence", t_ips_scope_and_idempotence),
+        ("IPS refreshes block deadline", t_ips_refreshes_block_deadline),
+        ("incident watermarks are bounded", t_incident_watermarks_are_bounded),
         ("c export + compile", t_c_export),
         ("SFAF alignment contract", t_alignment_contract),
         ("multidataset taxonomy", t_multidataset_taxonomy),

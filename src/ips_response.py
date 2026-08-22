@@ -216,7 +216,10 @@ class Responder:
             return {"ip": ip, "action": "skip", "reason": "allowlisted"}
         now = time.time()
         if ip in self.active and self.active[ip]["until"] > now:
-            self.active[ip]["until"] = now + self.block_seconds   # refresh
+            self.active[ip] = {"until": now + self.block_seconds, "kind": kind}
+            self._save_state()
+            if self.effective_enforce:
+                self._refresh_block(ip)
             return {"ip": ip, "action": "already-blocked", "kind": kind}
         if len(self.active) >= self.max_active:
             return {"ip": ip, "action": "skip", "reason": "max-active"}
@@ -318,8 +321,8 @@ class Responder:
         for hook in _SCOPE_HOOKS[self.scope]:
             chains.append(f"""  chain {hook} {{
     type filter hook {hook} priority -1; policy accept;
-    ip saddr @{NFT_THROTTLE_SET} limit rate over {self.throttle_pps}/second drop
-    ip6 saddr @{NFT_THROTTLE_SET6} limit rate over {self.throttle_pps}/second drop
+    ip saddr @{NFT_THROTTLE_SET} meter throttle_{hook}_v4 {{ ip saddr limit rate over {self.throttle_pps}/second }} drop
+    ip6 saddr @{NFT_THROTTLE_SET6} meter throttle_{hook}_v6 {{ ip6 saddr limit rate over {self.throttle_pps}/second }} drop
     ip saddr @{NFT_BLOCK_SET} drop
     ip6 saddr @{NFT_BLOCK_SET6} drop
   }}""")
@@ -376,6 +379,20 @@ class Responder:
                        bset, "{ %s }" % ip])
         elif self.backend == "iptables":
             self._run([ipt, "-D", IPT_CHAIN, "-s", ip, "-j", "DROP"])
+
+    def _refresh_block(self, ip):
+        """Align the backend timeout with the refreshed persisted deadline."""
+        bset, _, _ipt = self._sets_for(ip)
+        if self.backend == "nftables":
+            # The CLI has no `update element` command. Delete + add in one
+            # `nft -f` batch is atomic, so there is no unblocked gap between
+            # replacing the old kernel timeout and installing the new one.
+            batch = (f"delete element inet {NFT_TABLE} {bset} {{ {ip} }}\n"
+                     f"add element inet {NFT_TABLE} {bset} "
+                     f"{{ {ip} timeout {self.block_seconds}s }}\n")
+            self._run(["nft", "-f", "-"], stdin=batch)
+        # iptables rules have no kernel timeout: the userspace `expire()` call
+        # removes them according to the refreshed `self.active` deadline.
 
     def _apply_throttle(self, ip, seconds=None):
         """Rate-limit rather than blackhole — the graduated response tier.

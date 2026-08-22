@@ -133,6 +133,32 @@ class VerdictCache:
         return f"scored={self.scored:,} reused={self.reused:,} ({pct:.0f}% cached)"
 
 
+class IncidentWatermarks:
+    """Suppress duplicate alerts without retaining stale incidents forever.
+
+    State exists only for incident keys present in the current flow window. Once
+    a source/type disappears, a later incident is new and must alert again even
+    if it has fewer flows than the months-old incident it happens to resemble.
+    """
+
+    def __init__(self, growth=1.5):
+        self.growth = growth
+        self.counts = {}
+
+    def should_emit(self, key, flows):
+        previous = self.counts.get(key)
+        if previous is None or flows >= previous * self.growth:
+            self.counts[key] = flows
+            return True
+        return False
+
+    def retain(self, active_keys):
+        active = set(active_keys)
+        for key in list(self.counts):
+            if key not in active:
+                del self.counts[key]
+
+
 def aggregate(metas, results):
     """Group attack flows by (src_ip, kind) into one incident each."""
     inc = collections.OrderedDict()
@@ -361,26 +387,27 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
     t0 = packets[0][0]
     table = FlowTable()
     cache = VerdictCache(det)
-    seen = {}          # (src,kind) -> last flow count alerted
+    watermarks = IncidentWatermarks()
     next_ckpt = t0 + step
     n_pkts = 0
 
     def flush(now):
         rows = table.extract_live(min_pkts=1, window=window)
         metas, results = cache.classify_rows(rows)
+        active = set()
         for a in sorted(aggregate(metas, results), key=lambda x: -x["flows"]):
             if a["avg_conf"] < min_conf:
                 continue
             key = (a["src_ip"], a["kind"])
-            prev = seen.get(key, 0)
+            active.add(key)
             # alert on first sight or when the incident grows materially
-            if a["flows"] >= prev * 1.5 or prev == 0:
-                seen[key] = a["flows"]
+            if watermarks.should_emit(key, a["flows"]):
                 rel = now - t0
                 print(f"  {DIM(f'[t+{rel:6.1f}s]')}{fmt_incident(a)}")
                 alog.emit(a)
                 if responder is not None:
                     responder.handle(a["src_ip"], a["kind"], a["avg_conf"])
+        watermarks.retain(active)
         if responder is not None:
             responder.expire()
 
@@ -416,7 +443,7 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
     print(DIM(f"    window={window}s flush={flush_s}s model=live_ids.onnx"))
     table = FlowTable()
     cache = VerdictCache(det)
-    seen = {}
+    watermarks = IncidentWatermarks()
     stats = {"pkts": 0, "last_ts": time.time()}
 
     def on_pkt(p):
@@ -441,15 +468,17 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
             now = stats["last_ts"]
             rows = table.extract_live(min_pkts=1, window=window)
             metas, results = cache.classify_rows(rows)
+            active = set()
             for a in sorted(aggregate(metas, results), key=lambda x: -x["flows"]):
                 if a["avg_conf"] < min_conf:
                     continue
                 key = (a["src_ip"], a["kind"])
-                if a["flows"] >= seen.get(key, 0) * 1.5 or key not in seen:
-                    seen[key] = a["flows"]
+                active.add(key)
+                if watermarks.should_emit(key, a["flows"]):
                     print(fmt_incident(a)); alog.emit(a)
                     if responder is not None:
                         responder.handle(a["src_ip"], a["kind"], a["avg_conf"])
+            watermarks.retain(active)
             if responder is not None:
                 responder.expire()
             cache.forget(table.prune(older_than=idle_evict, now=now))

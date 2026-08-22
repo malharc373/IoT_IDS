@@ -59,11 +59,15 @@ isinstance Series -> a derived value, already in canonical units
 str               -> a source column, coerced to numeric
 ```
 
-and drops rows only for the features a dataset actually claims to supply:
+Parse failures in features a dataset claims to supply are also retained as NaN
+instead of deleting the row. Deleting them can select on traffic type or label.
+The frame carries an `alignment_report` with per-feature missing counts:
 
 ```python
-if supplied:
-    out = out.dropna(subset=supplied)
+out.attrs["alignment_report"] = {
+    "input_rows": len(df), "output_rows": len(out),
+    "dropped_rows": 0, "rows_missing_supplied": rows_missing,
+}
 ```
 
 XGBoost handles NaN natively by learning a default branch direction per split,

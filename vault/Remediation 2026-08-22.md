@@ -47,11 +47,11 @@ records the test evidence and commit that closed it.
 | R08 | P1 | Bound live incident suppression state (`seen`) | verified | lifecycle + 10k-key regression |
 | R09 | P1 | Refresh IPS firewall timeout and persisted state | verified | memory/disk/backend regression |
 | R10 | P1 | Make nft throttling per-source rather than shared | verified | meter grammar + ruleset regression |
-| R11 | P0 | Remove in-domain resubstitution from cross-dataset evaluation | open | rerun required |
-| R12 | P1 | Account for rows dropped by feature completeness policy | open | pending |
-| R13 | P1 | Make Bot-IoT sampling memory-bounded and representative | open | pending |
-| R14 | P1 | Version IoT-23 preprocessing caches | open | pending |
-| R15 | P1 | Report threshold-transfer selection bias at small budgets | open | pending |
+| R11 | P0 | Remove in-domain resubstitution from cross-dataset evaluation | implemented; rerun blocked | 80/20 split regression; datasets unmounted |
+| R12 | P1 | Account for rows dropped by feature completeness policy | verified | retain-NaN + quality-report regression |
+| R13 | P1 | Make Bot-IoT sampling memory-bounded and representative | verified | chunked reservoir regression |
+| R14 | P1 | Version IoT-23 preprocessing caches | verified | loader-digest cache regression |
+| R15 | P1 | Report threshold-transfer selection bias at small budgets | verified | unconditional-repeat regression |
 | R16 | P0 | Resolve 12-feature research vs 22-feature runtime disconnect | open | design/retrain |
 | R17 | P1 | Secure dataset downloads (TLS, checksums, safe extraction) | open | pending |
 | R18 | P1 | Declare complete/reproducible dependencies and lock strategy | open | pending |
@@ -162,6 +162,54 @@ pytest tests/ -q  -> 51 passed in 13.83s
 ruff check .      -> All checks passed
 git diff --check  -> clean
 ```
+
+### 2026-08-22 — R11–R15 implemented; invalid results quarantined
+
+- **R11:** each dataset now receives one deterministic, stratified 80/20 split.
+  A row model is trained only on the 80%; its diagonal is evaluated on the
+  untouched 20%, while off-diagonals use independent target datasets. The long
+  output records evaluation type and train/evaluation sizes. The regression
+  proves the diagonal partitions are disjoint.
+- **R12:** `_finish()` no longer deletes a row because a claimed feature failed
+  numeric parsing. The value remains NaN and `alignment_report` records input,
+  output, dropped, row-missing and per-feature missing counts. Loaders print the
+  quality count, turning possible selection bias into reviewable evidence.
+- **R13:** Bot-IoT now uses random-priority reservoir sampling over CSV chunks.
+  Memory is bounded by the requested sample plus one chunk and the result is a
+  uniform sample without replacement over the entire ordered file.
+- **R14:** IoT-23 cache names include a 12-hex SHA-256 digest of the loader
+  module. Any parsing, taxonomy, units or alignment code change selects a new
+  cache even when raw source mtimes are unchanged.
+- **R15:** every requested threshold-calibration repeat now contributes to the
+  mean. A single-class labelled draw uses the deployed 0.5 threshold instead of
+  being silently skipped. Output includes repeats, calibrated draws and success
+  rate, so small-budget results are unconditional rather than lucky-draw-only.
+
+The dataset symlink resolves to `/Volumes/GOAT/...`, but `/Volumes/GOAT` is not
+mounted and `md.available()` returns `[]`. Therefore R11's code is implemented
+and tested, but its scientific result is not closed. Every affected result was
+moved, without deletion, to `legacy/resubstitution-results/`. The live
+`demo/results/CROSS_DATASET_FINDINGS.md`, README, vault Home and EXP02 now state
+that the exact rerun is pending. Specifically withdrawn:
+
+- in-domain ROC-AUC 0.995;
+- the 0.487 in-domain/cross-domain gap;
+- exact transform rankings after the row/sampling policy change; and
+- the “ten labels recover 89%” claim after unconditional repeat handling.
+
+The historical off-diagonal mean ROC-AUC 0.509 remains evidence of severe
+domain shift, but is not presented as the current full-protocol result.
+
+Evidence before the artifact quarantine:
+
+```text
+pytest tests/ -q  -> 56 passed in 14.30s
+ruff check .      -> All checks passed
+```
+
+**R22 preparation:** the benchmark no longer calls a host×12 estimate an
+“easily real-time” verdict. Its section is explicitly `UNVALIDATED`, states that
+`PI_FACTOR` is not a measurement, and prints the target-Pi acceptance gate.
 
 ## External blockers and boundaries
 

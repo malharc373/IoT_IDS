@@ -10,9 +10,9 @@ splitting one merged corpus (which leaks near-duplicates across the split), we:
   3. report binary attack-vs-benign metrics per held-out dataset.
 
 Two experiments:
-  * NxN matrix    — train on each dataset, test on every dataset. The diagonal
-                    is in-domain performance; off-diagonal is cross-dataset
-                    generalisation.
+  * NxN matrix    — train on a fixed 80% split of each dataset, test the diagonal
+                    on its untouched 20% and every off-diagonal cell on the
+                    independent target dataset. No cell evaluates training rows.
   * pooled held-out — train on a chosen set, evaluate each held-out dataset.
 
 
@@ -60,6 +60,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import (
     f1_score, accuracy_score, recall_score, roc_auc_score,
     average_precision_score, matthews_corrcoef, balanced_accuracy_score,
@@ -106,11 +107,21 @@ def load_all(names, cap):
     data = {}
     for n in names:
         try:
-            df = balanced(md.load(n), cap)
-            if df.y.nunique() >= 1 and len(df) > 100:
+            raw = md.load(n)
+            report = raw.attrs.get("alignment_report", {})
+            df = balanced(raw, cap)
+            if df.y.nunique() >= 2 and len(df) > 100:
                 data[n] = df
+                quality = ""
+                if report.get("rows_missing_supplied"):
+                    quality = (f" missing-supplied="
+                               f"{report['rows_missing_supplied']:,}/"
+                               f"{report['output_rows']:,}")
                 print(f"  loaded {n:18} n={len(df):>7,} attack%={df.y.mean()*100:5.1f} "
-                      f"trivial_F1={trivial_f1(df.y.values):.3f}")
+                      f"trivial_F1={trivial_f1(df.y.values):.3f}{quality}")
+            else:
+                print(f"  SKIP {n}: need >100 rows and both classes "
+                      f"(n={len(df):,}, classes={df.y.nunique()})")
         except Exception as e:
             print(f"  SKIP {n}: {e}")
     return data
@@ -191,17 +202,45 @@ def _heatmap(M, title, path, cmap="RdYlGn", vmin=0.0, vmax=1.0, midline=None):
     plt.tight_layout(); plt.savefig(path, dpi=150); plt.close(fig)
 
 
+def _in_domain_splits(data, test_size=0.2):
+    """One deterministic stratified split per dataset for the entire matrix.
+
+    The former diagonal trained on `data[n]` and evaluated the same rows, so its
+    near-perfect AUC was resubstitution—not in-domain generalisation. Using the
+    same training split for every cell in a row keeps the row model constant.
+    """
+    train, test = {}, {}
+    for name, df in data.items():
+        if df.y.nunique() < 2:
+            raise ValueError(f"{name}: NxN training needs both benign and attack rows")
+        tr, te = train_test_split(
+            df, test_size=test_size, random_state=RS, stratify=df.y)
+        train[name] = tr.reset_index(drop=True)
+        test[name] = te.reset_index(drop=True)
+    return train, test
+
+
 def nxn_matrix(data, results_dir):
     names = list(data)
-    fitted = {n: _fit(data[n]) for n in names}
-    print("  trained per-dataset models")
+    if len(names) < 2:
+        raise ValueError("NxN evaluation needs at least two two-class datasets")
+    train_data, in_domain_test = _in_domain_splits(data)
+    fitted = {n: _fit(train_data[n]) for n in names}
+    print("  trained per-dataset models on fixed stratified 80% splits")
 
     long_rows = []
     for tr in names:
         sc, clf = fitted[tr]
         for te in names:
-            m = _eval(sc, clf, data[te])
-            long_rows.append({"train": tr, "test": te, "in_domain": tr == te, **m})
+            in_domain = tr == te
+            eval_df = in_domain_test[te] if in_domain else data[te]
+            m = _eval(sc, clf, eval_df)
+            long_rows.append({
+                "train": tr, "test": te, "in_domain": in_domain,
+                "evaluation": ("held_out_20pct" if in_domain
+                               else "independent_dataset"),
+                "n_train": len(train_data[tr]), "n_eval": len(eval_df), **m,
+            })
     long = pd.DataFrame(long_rows)
     long_path = os.path.join(results_dir, "cross_dataset_metrics_long.csv")
     long.round(4).to_csv(long_path, index=False)
@@ -209,10 +248,10 @@ def nxn_matrix(data, results_dir):
     mats = {}
     for metric, fname, title, cmap, vmin, vmax, mid in [
         ("roc_auc", "cross_dataset_auc_matrix",
-         "Cross-dataset ROC-AUC (0.5 = no signal; diagonal = in-domain)",
+         "Cross-dataset ROC-AUC (diagonal = held-out in-domain 20%)",
          "RdYlGn", 0.0, 1.0, 0.5),
         ("f1", "cross_dataset_matrix",
-         "Cross-dataset binary F1 (diagonal = in-domain)",
+         "Cross-dataset binary F1 (diagonal = held-out in-domain 20%)",
          "RdYlGn", 0.0, 1.0, None),
         ("f1_lift", "cross_dataset_lift_matrix",
          "F1 minus trivial all-attack baseline (<= 0 means degenerate)",

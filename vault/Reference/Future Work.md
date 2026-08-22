@@ -29,8 +29,10 @@ converts "99.99% on synthetic" into a number that survives a viva.
 ### ~~2. Threshold transfer on the CICDDoS2019 regime~~ — **done**
 
 [[EXP03 - Threshold transfer]] (`code/threshold_transfer.py`). The answer was
-better than "a few hundred": **ten** labelled flows recover 89% of the gap
-(F1 0.561 → 0.868 against a 0.905 ceiling), and the curve is flat past fifty.
+The earlier claim that **ten** labelled flows recover 89% of the gap was based
+on means that skipped single-class calibration samples. The implementation is
+now unconditional, but the exact budget must be rerun after the dataset mount
+is restored; see [[Remediation 2026-08-22]].
 
 It works wherever AUC is high and nowhere else — on the low-AUC domains the
 best achievable threshold *is* the all-attack classifier. That yields a

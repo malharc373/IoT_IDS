@@ -18,11 +18,11 @@ network attacks in real time on cheap hardware*:
    UNSW-NB15, TON-IoT, Bot-IoT, CIC-IoT-2023, CICDDoS2019, IoTID20, X-IIoTID,
    MQTT-IoT-IDS2020, WUSTL-IIoT, IoT-23) aligned into one 12-feature space to measure —
    not assert — how well flow behaviour transfers across labs/devices/tools. The
-   honest finding: **in-domain ROC-AUC 0.995 vs cross-domain 0.509** against a
-   chance baseline of 0.500, with MCC −0.007 — between arbitrary dataset pairs a
-   supervised detector transfers *at chance*. No fixed feature transform closes
-   it, but where the ranking *does* survive, **ten labelled target flows** fix
-   the operating point. This *is* the overfitting problem, quantified. See
+   last audited off-domain run found severe domain shift, but its diagonal was
+   later found to be resubstitution (train and test were the same rows). The
+   corrected held-out protocol is implemented and its exact headline numbers
+   are intentionally withheld until the external datasets are remounted and the
+   full study is rerun. See
    [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
 ```
@@ -154,34 +154,21 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 
 ### Cross-dataset generalization (the honest real-world number)
 
-Eleven datasets aligned to the 12-feature space, trained on one and tested on
-*others* (no leaky merged split — `code/cross_dataset_eval.py`). Reported with
+Eleven datasets align to the 12-feature space. The corrected protocol trains on
+a fixed 80% split of each source, tests the diagonal on its untouched 20%, and
+tests off-diagonal cells on independent datasets (`code/cross_dataset_eval.py`). Reported with
 ROC-AUC and MCC rather than F1, because each test set is ~50/50 balanced and a
 classifier that answers "attack" to everything scores F1 = 0.667:
 
-| metric | in-domain | cross-domain | chance |
-|---|---|---|---|
-| **ROC-AUC** | **0.995** | **0.509** | 0.500 |
-| **MCC** | **0.958** | **−0.007** | 0.000 |
-| Balanced accuracy | 0.978 | 0.494 | 0.500 |
-| Binary F1 | 0.979 | 0.438 | 2p/(1+p) |
+The previous run's mean off-diagonal ROC-AUC was 0.509 over 110 ordered pairs,
+which remains evidence of severe domain shift. Its 0.995 diagonal, however, was
+measured on training rows, so the quoted 0.487 gap and every downstream exact
+claim have been withdrawn. Row-retention, Bot-IoT sampling, IoT-23 cache
+invalidation, and small-budget calibration were corrected at the same time.
 
-81% of the 110 ordered dataset pairs score at or below the trivial all-attack
-baseline, and 55% sit at ROC-AUC ≤ 0.55. A CICIDS-only model scores 0.98
-in-domain and collapses everywhere else — it memorises artifacts, not attack
-behaviour. **No fixed feature transform helps**: the best of seven gains +0.118
-AUC over the baseline, against a fold-to-fold spread of 0.227
-(`code/transfer_experiment.py`), so the gain is not distinguishable from which
-datasets get held out.
-
-**But the gap is not uniform, and part of it is cheap.** Pooled-trained and held
-out on CICDDoS2019, the model reaches **AUC 0.927 but F1 0.561** — the ranking
-transfers almost perfectly and only the decision threshold fails. Fitting *just
-that threshold* on **ten labelled target flows** takes F1 to **0.868**, 89% of
-the way to the 0.905 ceiling (`code/threshold_transfer.py`). It works wherever
-AUC is high and nowhere else, which gives a practical rule: **measure AUC on the
-target domain first** — high AUC is a ten-label calibration problem, low or
-inverted AUC is a representation problem. Full study + heatmaps in
+The external dataset mount is currently unavailable, so publishing replacement
+numbers would be fabrication. The affected artifacts are quarantined under
+`legacy/resubstitution-results/`; the live status and reproduction gate are in
 [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
 ### System benchmark (Apple M4; `python demo/benchmark.py`)

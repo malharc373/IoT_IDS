@@ -28,7 +28,10 @@ For each held-out dataset:
   2. score the target domain,
   3. draw a labelled calibration sample of n flows, fit ONLY a scalar threshold
      on it, and evaluate on the *remaining* target flows,
-  4. repeat over seeds and report the mean.
+  4. if a random sample contains only one class, keep the deployed 0.5 threshold
+     for that repeat instead of conditionally discarding the unlucky draw,
+  5. repeat over seeds and report the unconditional mean plus the fraction of
+     draws on which calibration was possible.
 
 Three reference lines bound the result:
 
@@ -100,6 +103,32 @@ def _metrics(y, prob, thr):
     }
 
 
+def evaluate_budget(y, prob, n_labels, repeats, rng):
+    """Evaluate every random draw, including single-class calibration samples.
+
+    A single-class draw cannot fit a meaningful threshold. The old study simply
+    skipped it, so small-budget means were conditional on getting a lucky draw
+    containing both classes. The deployable fallback is the existing 0.5
+    threshold; including it produces an unconditional estimate and the returned
+    success count makes sample adequacy explicit.
+    """
+    f1s, mccs = [], []
+    calibrated = 0
+    for _ in range(repeats):
+        idx = rng.choice(len(y), size=n_labels, replace=False)
+        mask = np.zeros(len(y), dtype=bool)
+        mask[idx] = True
+        if len(np.unique(y[mask])) < 2:
+            thr = 0.5
+        else:
+            thr, _ = best_threshold(y[mask], prob[mask])
+            calibrated += 1
+        m = _metrics(y[~mask], prob[~mask], thr)
+        f1s.append(m["f1"])
+        mccs.append(m["mcc"])
+    return f1s, mccs, calibrated
+
+
 def study(data, train_names, budgets, repeats, out_csv):
     train_names = [n for n in train_names if n in data]
     held = [n for n in data if n not in train_names]
@@ -136,23 +165,16 @@ def study(data, train_names, budgets, repeats, out_csv):
                      "oracle_f1": round(oracle_f1, 4), "trivial_f1": round(triv, 4),
                      "oracle_lift": round(oracle_lift, 4),
                      "degenerate": bool(degenerate),
-                     "recovered": 0.0, "note": "default threshold 0.5"})
+                     "recovered": 0.0, "n_repeats": 1, "n_calibrated": 0,
+                     "calibration_success_rate": 0.0,
+                     "note": "default threshold 0.5"})
 
         rng = np.random.RandomState(RS)
         for n in budgets:
             if n >= len(y):
                 continue
-            f1s, mccs = [], []
-            for _ in range(repeats):
-                idx = rng.choice(len(y), size=n, replace=False)
-                mask = np.zeros(len(y), dtype=bool); mask[idx] = True
-                if len(np.unique(y[mask])) < 2:
-                    continue          # calibration sample saw one class only
-                thr, _ = best_threshold(y[mask], prob[mask])
-                m = _metrics(y[~mask], prob[~mask], thr)
-                f1s.append(m["f1"]); mccs.append(m["mcc"])
-            if not f1s:
-                continue
+            f1s, mccs, calibrated = evaluate_budget(
+                y, prob, n, repeats, rng)
             f1m = float(np.mean(f1s))
             # fraction of the default->oracle gap that this budget recovers
             span = oracle_f1 - default["f1"]
@@ -163,10 +185,15 @@ def study(data, train_names, budgets, repeats, out_csv):
                          "trivial_f1": round(triv, 4),
                          "oracle_lift": round(oracle_lift, 4),
                          "degenerate": bool(degenerate),
-                         "recovered": round(rec, 4), "note": ""})
+                         "recovered": round(rec, 4),
+                         "n_repeats": repeats, "n_calibrated": calibrated,
+                         "calibration_success_rate": round(calibrated / repeats, 4),
+                         "note": ("single-class draws use threshold 0.5"
+                                  if calibrated < repeats else "")})
             note = " (to a degenerate optimum)" if degenerate else ""
             print(f"      {n:>5} labels -> F1 {f1m:.3f}  "
-                  f"({rec*100:5.1f}% of the calibration gap){note}")
+                  f"({rec*100:5.1f}% of the calibration gap; calibrated "
+                  f"{calibrated}/{repeats} draws){note}")
         print()
 
     out = pd.DataFrame(rows)

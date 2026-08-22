@@ -2,9 +2,19 @@
 title: EXP03 — Threshold transfer
 tags: [experiment, sfaf, domain-adaptation, results]
 date: 2026-08-20
+status: superseded
+superseded_by: unconditional calibration rerun pending in Remediation 2026-08-22
 ---
 
 # EXP03 — How many labelled target flows buy back the gap?
+
+> [!danger] Superseded on 2026-08-22
+> Single-class calibration samples were skipped, so small-budget means were
+> conditional on drawing both classes. The corrected implementation evaluates
+> every draw and falls back to threshold 0.5 when calibration is impossible.
+> The tables below are preserved as historical evidence but must not be cited
+> until the datasets are remounted and the unconditional study is rerun. See
+> [[Remediation 2026-08-22]].
 
 Follow-up to [[EXP02 - Corrected alignment rerun]], which surfaced a result the
 old F1-only metrics had hidden: on some held-out datasets the model's *ranking*

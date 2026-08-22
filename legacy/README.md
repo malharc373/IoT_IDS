@@ -5,10 +5,19 @@ historical record of the thesis work, and because a retracted number is more
 useful when you can see what it was and why it changed than when it silently
 disappears.
 
-**Do not cite any figure from this directory.** The live numbers are in
+**Do not cite any figure from this directory.** Current status is in
 [`../demo/results/CROSS_DATASET_FINDINGS.md`](../demo/results/CROSS_DATASET_FINDINGS.md),
 [`../demo/results/BENCHMARK.md`](../demo/results/BENCHMARK.md), and
 [`../README.md`](../README.md).
+
+## `resubstitution-results/`
+
+The 2026-08-20 eleven-dataset outputs. Their off-diagonal cells were genuine
+cross-dataset tests, but the diagonal trained and evaluated on the same rows.
+The published 0.995 in-domain AUC and 0.487 gap are therefore resubstitution
+artifacts. The 2026-08-22 audit also changed row retention, Bot-IoT sampling,
+IoT-23 cache invalidation and small-budget threshold handling, so all exact
+tables are quarantined together until a full rerun is possible.
 
 ## `pre-remediation-results/`
 

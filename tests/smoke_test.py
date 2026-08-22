@@ -935,6 +935,88 @@ def t_alignment_contract():
     assert r.iloc[0] == 5.0 and np.isnan(r.iloc[1])
 
 
+def t_alignment_preserves_and_accounts_for_missing_rows():
+    """A parse failure is retained as NaN and reported, not selection-biased."""
+    import importlib.util
+    import pandas as pd
+    import numpy as np
+    spec = importlib.util.spec_from_file_location(
+        "mds_missing", os.path.join(ROOT, "code", "multidataset.py"))
+    md = importlib.util.module_from_spec(spec); spec.loader.exec_module(md)
+    raw = pd.DataFrame({"duration": [1.0, "bad", 3.0]})
+    aligned = md._finish(
+        raw, {"Flow Duration": "duration"}, [0, 1, 0],
+        ["benign", "dos", "benign"], "fixture")
+    assert len(aligned) == 3 and np.isnan(aligned.loc[1, "Flow Duration"])
+    report = aligned.attrs["alignment_report"]
+    assert report["input_rows"] == report["output_rows"] == 3
+    assert report["dropped_rows"] == 0
+    assert report["rows_missing_supplied"] == 1
+
+
+def t_botiot_sampling_is_memory_bounded():
+    """Uniform CSV sampling reads chunks and is not a biased head slice."""
+    import importlib.util
+    import pandas as pd
+    spec = importlib.util.spec_from_file_location(
+        "mds_sample", os.path.join(ROOT, "code", "multidataset.py"))
+    md = importlib.util.module_from_spec(spec); spec.loader.exec_module(md)
+    path = os.path.join(TMP, "ordered.csv")
+    pd.DataFrame({"row": range(10_000), "attack": [0] * 5000 + [1] * 5000}).to_csv(
+        path, index=False)
+    sample = md._read_csv_reservoir(path, 200, chunksize=137, seed=42)
+    assert len(sample) == 200 and sample.row.nunique() == 200
+    assert sample.row.min() < 1000 and sample.row.max() > 9000, (
+        "sample resembles a head read rather than the full ordered file")
+    assert 0 < sample.attack.mean() < 1, "ordered class tail was not sampled"
+
+
+def t_iot23_cache_tracks_loader_code():
+    import importlib.util, re
+    spec = importlib.util.spec_from_file_location(
+        "mds_cache", os.path.join(ROOT, "code", "multidataset.py"))
+    md = importlib.util.module_from_spec(spec); spec.loader.exec_module(md)
+    assert re.fullmatch(r"[0-9a-f]{12}", md.LOADER_CACHE_FINGERPRINT)
+    cache = md._iot23_cache_path("/data", 123)
+    assert md.LOADER_CACHE_FINGERPRINT in cache and cache.endswith(".parquet")
+
+
+def t_nxn_diagonal_is_held_out():
+    """In-domain matrix cells never evaluate rows used to fit their model."""
+    import importlib.util
+    import pandas as pd
+    import numpy as np
+    spec = importlib.util.spec_from_file_location(
+        "cross_split", os.path.join(ROOT, "code", "cross_dataset_eval.py"))
+    ce = importlib.util.module_from_spec(spec); spec.loader.exec_module(ce)
+    data = {}
+    for j, name in enumerate(("a", "b")):
+        n = 200
+        frame = pd.DataFrame({f: np.arange(n, dtype=float) + j * 1000
+                              for f in ce.md.UNIFIED_FEATURES})
+        frame["y"] = np.tile([0, 1], n // 2)
+        data[name] = frame
+    train, test = ce._in_domain_splits(data)
+    for name in data:
+        assert len(train[name]) == 160 and len(test[name]) == 40
+        marker = ce.md.UNIFIED_FEATURES[0]
+        assert set(train[name][marker]).isdisjoint(set(test[name][marker]))
+
+
+def t_threshold_budget_includes_failed_calibration_draws():
+    import importlib.util
+    import numpy as np
+    spec = importlib.util.spec_from_file_location(
+        "threshold_unconditional", os.path.join(ROOT, "code", "threshold_transfer.py"))
+    tt = importlib.util.module_from_spec(spec); spec.loader.exec_module(tt)
+    y = np.array([0] * 99 + [1])
+    prob = np.linspace(0, 1, len(y))
+    f1s, mccs, calibrated = tt.evaluate_budget(
+        y, prob, n_labels=2, repeats=100, rng=np.random.RandomState(42))
+    assert len(f1s) == len(mccs) == 100, "single-class draws were skipped"
+    assert 0 < calibrated < 10, calibrated
+
+
 def t_multidataset_taxonomy():
     # taxonomy normalization is data-free and must be stable
     import importlib.util
@@ -1336,6 +1418,11 @@ TESTS = [
         ("incident watermarks are bounded", t_incident_watermarks_are_bounded),
         ("c export + compile", t_c_export),
         ("SFAF alignment contract", t_alignment_contract),
+        ("alignment missing-row accounting", t_alignment_preserves_and_accounts_for_missing_rows),
+        ("Bot-IoT bounded reservoir sampling", t_botiot_sampling_is_memory_bounded),
+        ("IoT-23 cache tracks loader code", t_iot23_cache_tracks_loader_code),
+        ("NxN diagonal uses held-out rows", t_nxn_diagonal_is_held_out),
+        ("threshold budget is unconditional", t_threshold_budget_includes_failed_calibration_draws),
         ("multidataset taxonomy", t_multidataset_taxonomy),
         ("zeek composite labels", t_zeek_composite_labels),
         ("trivial-baseline guard", t_trivial_baseline),

@@ -3,9 +3,19 @@ title: EXP02 — Corrected alignment rerun
 tags: [experiment, sfaf, results]
 date: 2026-08-19
 supersedes: EXP01
+status: superseded
+superseded_by: protocol-correct rerun pending in Remediation 2026-08-22
 ---
 
 # EXP02 — Cross-dataset study, corrected alignment + honest metrics
+
+> [!danger] Superseded on 2026-08-22
+> The off-diagonal cells were genuine independent-dataset tests, but the
+> diagonal trained and evaluated on identical rows. Therefore the 0.995
+> in-domain value and 0.487 gap below are resubstitution artifacts. Additional
+> row-retention, sampling, cache and calibration corrections also require exact
+> numbers to be rerun. Preserved as history; do not cite. See
+> [[Remediation 2026-08-22]] and `demo/results/CROSS_DATASET_FINDINGS.md`.
 
 Rerun of the full SFAF cross-dataset study after [[F01 - SFAF feature mappings are semantically wrong]]
 (correct feature semantics + units) and [[F02 - Cross-domain F1 includes degenerate classifiers]]

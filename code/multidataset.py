@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import os
 import glob
+import hashlib
 import numpy as np
 import pandas as pd
 
@@ -87,6 +88,11 @@ DEFAULT_ROOT = os.environ.get(
     "IOTIDS_DATASETS_ROOT",
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "Datasets"))
 RS = 42
+
+# Cache filenames include a digest of this loader module. Any change to parsing,
+# taxonomy, feature semantics or units therefore invalidates derived caches.
+with open(__file__, "rb") as _loader_source:
+    LOADER_CACHE_FINGERPRINT = hashlib.sha256(_loader_source.read()).hexdigest()[:12]
 
 US_PER_S = 1_000_000.0
 
@@ -183,10 +189,44 @@ def _finish(df, feat_src, y, cat, dataset):
     out["dataset"] = dataset
     # inf is a parse artifact (a rate over zero duration); NaN is the honest value
     out = out.replace([np.inf, -np.inf], np.nan)
-    # drop rows only for features this dataset claims to supply
-    if supplied:
-        out = out.dropna(subset=supplied)
-    return out.reset_index(drop=True)
+    # Parse failures in a claimed feature used to delete the whole row. That can
+    # preferentially remove one label/traffic family and bias every downstream
+    # metric. Preserve the row as NaN (XGBoost handles it) and attach an explicit
+    # accounting report so data quality is observable rather than silent.
+    missing = {name: int(out[name].isna().sum()) for name in supplied}
+    rows_missing = int(out[supplied].isna().any(axis=1).sum()) if supplied else 0
+    out = out.reset_index(drop=True)
+    out.attrs["alignment_report"] = {
+        "dataset": dataset,
+        "input_rows": int(len(df)),
+        "output_rows": int(len(out)),
+        "dropped_rows": 0,
+        "rows_missing_supplied": rows_missing,
+        "missing_by_supplied_feature": missing,
+    }
+    return out
+
+
+def _read_csv_reservoir(path, max_rows, chunksize=250_000, seed=RS):
+    """Uniform bounded-memory CSV sample using random priorities.
+
+    Keeping the `max_rows` smallest independent priorities is an exact uniform
+    sample without replacement. Peak memory is one input chunk plus the sample,
+    rather than the entire source file.
+    """
+    if not max_rows:
+        return pd.read_csv(path, low_memory=False)
+    rng = np.random.RandomState(seed)
+    keep = None
+    for chunk in pd.read_csv(path, low_memory=False, chunksize=chunksize):
+        chunk = chunk.copy()
+        chunk["__sample_priority"] = rng.random_sample(len(chunk))
+        keep = chunk if keep is None else pd.concat([keep, chunk], ignore_index=True)
+        if len(keep) > max_rows:
+            keep = keep.nsmallest(max_rows, "__sample_priority")
+    if keep is None:
+        return pd.DataFrame()
+    return keep.drop(columns=["__sample_priority"]).reset_index(drop=True)
 
 
 def coverage(name):
@@ -306,11 +346,9 @@ def load_botiot(root, max_rows=400_000):
     files = sorted(glob.glob(os.path.join(root, "BotIoT", "*.csv")))
     per = max(max_rows // max(len(files), 1), 1) if max_rows else None
     dfs = []
-    for f in files:
-        t = pd.read_csv(f, low_memory=False)
+    for i, f in enumerate(files):
+        t = _read_csv_reservoir(f, per, seed=RS + i)
         t.columns = t.columns.str.strip()
-        if per and len(t) > per:
-            t = t.sample(per, random_state=RS)
         dfs.append(t)
     df = pd.concat(dfs, ignore_index=True)
     y = df["attack"].astype(int)
@@ -623,6 +661,12 @@ def _read_zeek_sampled(path, max_rows, chunksize=250_000):
     return _split_composite_columns(df)
 
 
+def _iot23_cache_path(root, max_rows_per_file):
+    return os.path.join(
+        root, "IoT23",
+        f"_sampled_{max_rows_per_file}_{LOADER_CACHE_FINGERPRINT}.parquet")
+
+
 def load_iot23(root, max_rows_per_file=60_000):
     """IoT-23 — real IoT malware Zeek conn.log.labeled files. `duration` in SECONDS.
 
@@ -638,12 +682,23 @@ def load_iot23(root, max_rows_per_file=60_000):
     # The extracted corpus is ~27 GB (one file is 10 GB on its own), so a full
     # sampling pass costs tens of minutes of pure I/O. Cache the sampled frame
     # and reuse it while it is newer than every source file.
-    cache = os.path.join(root, "IoT23", f"_sampled_{max_rows_per_file}.parquet")
+    cache = _iot23_cache_path(root, max_rows_per_file)
     try:
         if os.path.exists(cache):
             newest = max(os.path.getmtime(f) for f in files)
             if os.path.getmtime(cache) > newest:
-                return pd.read_parquet(cache)
+                cached = pd.read_parquet(cache)
+                supplied = [f for f, present in coverage("iot_23").items() if present]
+                cached.attrs["alignment_report"] = {
+                    "dataset": "iot_23", "input_rows": int(len(cached)),
+                    "output_rows": int(len(cached)), "dropped_rows": 0,
+                    "rows_missing_supplied": int(
+                        cached[supplied].isna().any(axis=1).sum()),
+                    "missing_by_supplied_feature": {
+                        f: int(cached[f].isna().sum()) for f in supplied},
+                    "source": "versioned_cache",
+                }
+                return cached
     except Exception:
         pass
 
@@ -795,5 +850,10 @@ if __name__ == "__main__":
             print(f"  {'':18} cats={sorted(df['category'].unique())}")
             if miss:
                 print(f"  {'':18} absent: {miss}")
+            report = df.attrs.get("alignment_report", {})
+            if report.get("rows_missing_supplied"):
+                print(f"  {'':18} quality: {report['rows_missing_supplied']:,}/"
+                      f"{report['output_rows']:,} rows have NaN in a supplied feature; "
+                      "retained, not silently dropped")
         except Exception as e:
             print(f"  {name:18} ERROR {e}")

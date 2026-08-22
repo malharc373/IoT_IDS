@@ -107,8 +107,10 @@ signal that it is Zeek's limitation, not the alignment's. Those slots are
   - ~27 GB extracted, one file **10 GB alone**. `pd.read_csv` on that
     materialises tens of GB. Now byte-scan row count → chunked parse → sample
     at the corresponding fraction, with only the needed columns parsed.
-- Sampled frames are cached at `Datasets/IoT23/_sampled_<n>.parquet` and reused
-  while newer than every source file — a full pass is tens of minutes of I/O.
+- Sampled frames are cached at
+  `Datasets/IoT23/_sampled_<n>_<loader-digest>.parquet` and reused while newer
+  than every source file. The digest covers the loader source, so parsing,
+  taxonomy or alignment changes cannot silently reuse an incompatible cache.
 - Detailed-label vocabulary (by frequency): `PartOfAHorizontalPortScan`,
   `-` (benign), `DDoS`, `C&C`, `Attack`, `C&C-Torii`. Plain `C&C` had no
   taxonomy entry and fell through to `other_attack`; `c&c` is now a botnet key.

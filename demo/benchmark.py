@@ -286,7 +286,7 @@ def _cross_dataset_note():
     """
     csv_path = os.path.join(RESULTS, "cross_dataset_metrics_long.csv")
     if not os.path.exists(csv_path):
-        return ["for the honest cross-dataset numbers (results CSV not present)."]
+        return ["cross-dataset exact numbers withdrawn; protocol-correct rerun pending."]
     import pandas as pd
     df = pd.read_csv(csv_path)
     dia, off = df[df["in_domain"]], df[~df["in_domain"]]
@@ -333,7 +333,7 @@ def bench_memory():
 
 # ── 8. Pi projection ──────────────────────────────────────────────────────────
 def bench_pi(lat_rows, c_ns, extract):
-    section("8. RASPBERRY PI 4 PROJECTION (host x %.0f)" % PI_FACTOR)
+    section("8. UNVALIDATED RASPBERRY PI 4 PROJECTION (host x %.0f)" % PI_FACTOR)
     single_us = lat_rows[0][1] * 1000
     host_cpu = "Apple M4"
     try:
@@ -351,8 +351,9 @@ def bench_pi(lat_rows, c_ns, extract):
         npk, nfl, tp = extract
         out(f"  feature extraction (Pi): ~{npk/tp/PI_FACTOR:,.0f} packets/s "
             f"(the real bottleneck on a live link)")
-    out("  verdict                : easily real-time on a Pi 4 for home/IIoT "
-        "link rates; sniffing/aggregation, not inference, is the limit.")
+    out("  status                 : estimate only — PI_FACTOR is not a measurement.")
+    out("  acceptance gate        : run this benchmark on the target Pi and publish "
+        "the raw output before making a real-time throughput claim.")
 
 
 def _is_pi():

@@ -21,41 +21,43 @@ The live model scores ~100% and three separate checks
 captures go through `src/flow_features.py`, there is no defensible accuracy
 claim for the live half at all.
 
-IoT-23 is the obvious target: real IoT malware, real labels, and it ships raw
-pcaps. Extract `iot_23_datasets_small.tar.gz`, run the pcaps through the same
-22-feature pipeline, and report per-family recall. This single experiment
-converts "99.99% on synthetic" into a number that survives a viva.
+IoT-23 is useful for the 12-feature research study, but the currently supported
+source is labelled Zeek flow logs, not raw pcaps, so it cannot validate the
+22-feature packet-derived live contract by itself. Obtain a labelled capture
+whose packets and ground truth can be joined without leakage, run it through
+`src/flow_features.py`, and report per-family recall plus benign false-positive
+rate. That is the acceptance experiment for the live detector.
 
-### ~~2. Threshold transfer on the CICDDoS2019 regime~~ — **done**
+### 2. Rerun threshold transfer with the corrected protocol
 
-[[EXP03 - Threshold transfer]] (`code/threshold_transfer.py`). The answer was
-The earlier claim that **ten** labelled flows recover 89% of the gap was based
+The earlier [[EXP03 - Threshold transfer]] claim that **ten** labelled flows
+recover 89% of the gap was based
 on means that skipped single-class calibration samples. The implementation is
 now unconditional, but the exact budget must be rerun after the dataset mount
 is restored; see [[Remediation 2026-08-22]].
 
-It works wherever AUC is high and nowhere else — on the low-AUC domains the
-best achievable threshold *is* the all-attack classifier. That yields a
-practical rule: measure AUC on the target first; high AUC is a ten-label
-calibration problem, low or inverted AUC is a representation problem.
+Do not infer a target-label budget or a general operating rule until the
+corrected rerun completes. The safe hypothesis to test is that threshold
+calibration may help when ranking transfers, while low or inverted ranking
+would require a representation change rather than a new threshold.
 
 Remaining follow-up: calibrate a *probability* (Platt/isotonic on the target
 sample) rather than a threshold, which would also address
 [[F09 - IPS gate uses uncalibrated confidence]].
 
-### 3. Trace the polarity inversion — now on two datasets
+### 3. Re-evaluate the historical polarity-inversion signal
 
-Pooled-trained AUC **0.314** on WUSTL-IIoT and **0.195** on IoT-23 — both
-reliably *worse* than chance (FPR 0.94 and 0.92). Inverting the decision would
-give 0.686 and 0.805, so the information is present with reversed polarity.
-Two independent datasets make this a pattern, not a quirk. Per-feature SHAP
-against a transferring dataset should localise it; a named cause is a genuine
-contribution.
+Withdrawn runs suggested reversed score polarity on WUSTL-IIoT and IoT-23, but
+their exact values are quarantined with the invalidated evaluation artifacts.
+First reproduce the signal under the held-out protocol. If it persists,
+per-feature SHAP against a transferring dataset may localise a semantic or
+collection-regime cause.
 
 ### 4. Real domain adaptation
 
-[[EXP02 - Corrected alignment rerun]] shows no *fixed* transform helps (all
-seven land between AUC 0.46 and 0.57 against chance 0.50). The next tier:
+Historical [[EXP02 - Corrected alignment rerun]] results are quarantined and
+must not be treated as a current comparison. After the protocol-correct rerun
+establishes a baseline, candidates for a preregistered next tier include:
 
 - **CORAL** — align second-order statistics; ~5 lines, drops straight into
   `TRANSFORMS`

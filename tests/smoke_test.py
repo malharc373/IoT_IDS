@@ -1429,6 +1429,44 @@ def t_no_retracted_numbers_in_live_docs():
         f"(they belong only under legacy/): {offenders}")
 
 
+def t_current_claims_are_evidence_scoped():
+    """Authoritative overview/deployment prose must not revive stale claims."""
+    authoritative = [
+        "README.md",
+        "deploy/README_PI.md",
+        "deploy/README_MCU.md",
+        "vault/Project Overview.md",
+        "vault/Reference/Architecture.md",
+        "vault/Reference/Future Work.md",
+        "src/train_live_model.py",
+        "src/ids_daemon.py",
+    ]
+    withdrawn = [
+        "~96 KB",
+        "~42 KB",
+        "~6 µs/flow",
+        "381k flows/s",
+        "~248k packets/s",
+        "The scaler is baked in",
+        "Pooled-trained AUC **0.314**",
+        "**0.195** on IoT-23",
+        "ships raw\npcaps",
+        "real labelled\n> IoT-23 captures",
+    ]
+    offenders = []
+    for rel in authoritative:
+        text = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+        for needle in withdrawn:
+            if needle in text:
+                offenders.append(f"{rel}: {needle!r}")
+    assert not offenders, f"stale or unsupported current claims: {offenders}"
+
+    readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
+    for supported in ["99.65%", "0.9961", "91.8 KB", "11.1 µs/flow",
+                      "399,270 flows/s", "Raspberry Pi throughput remains"]:
+        assert supported in readme, f"README lost evidence/scope marker: {supported}"
+
+
 def t_benchmark_extraction_section_runs():
     """Section 4 must actually produce numbers, not a swallowed exception.
 
@@ -1518,6 +1556,7 @@ TESTS = [
         ("benchmark params", t_benchmark_params),
         ("benchmark extraction section runs", t_benchmark_extraction_section_runs),
         ("no retracted numbers in live docs", t_no_retracted_numbers_in_live_docs),
+        ("current claims are evidence scoped", t_current_claims_are_evidence_scoped),
         ("systemd unit sane", t_systemd_unit_sane),]
 
 

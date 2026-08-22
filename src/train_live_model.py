@@ -54,7 +54,7 @@ also trains an identical model with `dst_port` removed and reports both. The
 gap between them is the honest measure of how much work the port is doing.
 
 Outputs:
-    models/live_ids.onnx     scaler + classifier, one file
+    models/live_ids.onnx     raw-feature classifier, one file
     models/live_meta.json     feature order, label map, metrics
     demo/results/live_confusion_matrix.png
     demo/results/live_classification_report.csv

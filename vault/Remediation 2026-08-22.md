@@ -56,7 +56,7 @@ records the test evidence and commit that closed it.
 | R17 | P1 | Secure dataset downloads (TLS, checksums, safe extraction) | verified | archive security regression + full suite |
 | R18 | P1 | Declare complete/reproducible dependencies and lock strategy | verified | fresh-venv suite + lock freshness |
 | R19 | P1 | Replace stale report and presentation with editable sources | verified | PDF/PPTX render QA + editable sources |
-| R20 | P1 | Reconcile README, vault, daemon, model-card claims | open | pending |
+| R20 | P1 | Reconcile README, vault, daemon, model-card claims | verified | claim guard + full suite |
 | R21 | P2 | Add real labelled-traffic and group-split experiments | blocked externally | dataset/hardware |
 | R22 | P2 | Run actual Raspberry Pi performance/soak measurements | blocked externally | Pi required |
 | R23 | P1 | Add license, model/data cards, branch protection, security settings | open | GitHub access needed |
@@ -339,12 +339,41 @@ PDF SHA-256              -> 9c2a8f24bb0b47d9faff644579f43e2e856f52f8b6ecbd879740
 PPTX SHA-256             -> cc49b2d9e99b7b89e4f7f90a8b914de22680dbbad230c4499e8ac2d238daf91e
 ```
 
+### 2026-08-22 — R20 current claims reconciled
+
+The README, deployment guides, daemon/trainer descriptions, project overview,
+architecture note and roadmap now agree with the current artifacts and evidence:
+
+- the live ONNX file is 91.8 KB and the generated C model contains about 43 KB
+  of constant tree data;
+- the audited Apple M4 result is 11.1 microseconds per single flow, with
+  399,270 flows/s at batch 1024; these are explicitly host-only measurements;
+- the unseen-seed synthetic result is 99.65% multiclass accuracy, 0.9961 macro
+  F1 and 94.2% Mirai recall, not a real-traffic accuracy claim;
+- cross-dataset exact conclusions remain withdrawn until the corrected rerun;
+- the raw-feature ONNX and C paths have no scaler; and
+- the currently supported IoT-23 source is Zeek flow logs, not packet captures
+  capable of validating the live 22-feature extractor.
+
+A regression now scans the authoritative current prose for the stale footprint,
+throughput, scaler and withdrawn-polarity claims while requiring the README's
+evidence-scope markers.
+
+Evidence:
+
+```text
+pytest tests/test_suite.py -q  -> 59 passed in 13.32s
+ruff check .                  -> All checks passed
+git diff --check              -> clean
+```
+
 ## External blockers and boundaries
 
 - A real Pi benchmark cannot be fabricated on this Mac. The code and runbook
   can be prepared; the measurement remains open until Pi output is captured.
-- Real IoT-23 packet validation depends on the external dataset mount, which was
-  unavailable during the independent audit.
+- Live-model validation requires a labelled packet capture compatible with the
+  22-feature extractor. The supported IoT-23 source is flow logs and the
+  external research-dataset mount was unavailable during this audit.
 - Rewriting public Git history is destructive and affects collaborators. It is
   tracked, but will not be performed without a specific coordinated decision.
 - GitHub branch protection/security settings are remote mutations. They will be

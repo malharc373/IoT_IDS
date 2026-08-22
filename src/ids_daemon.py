@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ids_daemon.py — real-time IoT Intrusion Detection daemon.
+ids_daemon.py — streaming IoT Intrusion Detection daemon.
 
 One detection core, three feeding modes:
 
@@ -17,7 +17,8 @@ One detection core, three feeding modes:
 Alerts are aggregated per (source, attack-type): a port scan that touches 500
 ports becomes ONE "portscan from X — 500 ports" alert, not 500 lines — the way
 a real sensor reports.  Runtime deps: onnxruntime + numpy (+ scapy for --iface).
-The ONNX model has the scaler baked in, so nothing else is needed on the edge.
+The ONNX model consumes raw features directly, so no preprocessing artifact is
+needed on the edge.
 """
 from __future__ import annotations
 
@@ -509,7 +510,7 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Real-time IoT IDS daemon")
+    ap = argparse.ArgumentParser(description="Streaming IoT IDS daemon")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--pcap", help="offline: classify a capture file")
     g.add_argument("--replay", help="offline: replay a pcap, live-style alerts")

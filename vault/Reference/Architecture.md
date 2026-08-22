@@ -6,8 +6,10 @@ date: 2026-08-19
 
 # Architecture
 
-Two halves sharing one idea: *a small, flow-based model can detect and stop
-network attacks in real time on cheap hardware.*
+Two separate prototypes testing one idea: *whether a small, flow-based model
+can detect and help stop network attacks on constrained edge hardware.* The
+architecture is implemented; real-traffic and target-hardware claims remain
+gated on R21 and R22.
 
 ## Half 1 — the live edge IDS/IPS
 
@@ -44,7 +46,7 @@ the Pi.
 
 ### Invariants worth preserving
 
-- **Feature order is a contract.** `Detector` asserts
+- **Feature order is a contract.** `Detector` validates
   `meta["features"] == FEATURE_NAMES` at load.
 - **Exports are verified or not shipped.** `train_live_model.py` deletes the
   ONNX and exits non-zero below 99.9% agreement; `export_c.py --verify`

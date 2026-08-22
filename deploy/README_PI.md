@@ -6,7 +6,7 @@ dependency lock has CPython 3.10 aarch64 wheels available for its native
 packages. Actual Pi throughput and soak evidence is still pending; host
 inference timings are not a substitute for that acceptance run.
 
-The edge model (`models/live_ids.onnx`, ~96 KB) takes raw flow features — trees
+The edge model (`models/live_ids.onnx`, 91.8 KB) takes raw flow features — trees
 are scale-invariant, so there is no scaler to ship or drift — and the Pi needs
 only `onnxruntime + numpy + scapy`, no training stack.
 

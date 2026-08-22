@@ -1,15 +1,17 @@
 # IoT-IDS — Edge Intrusion Detection & Prevention for IoT Networks
 
-A machine-learning IDS/IPS for IoT networks, built around **SFAF (Semantic
-Feature Alignment Framework)** and deployable as a real-time sensor on hardware
-from a Raspberry Pi down to an ESP32-class microcontroller.
+A machine-learning IDS/IPS prototype for IoT networks with two deliberately
+separate artifacts: a 22-feature live detector and an **SFAF (Semantic Feature
+Alignment Framework)** cross-dataset research model.
 
-Two halves share one idea — *a small, flow-based model can detect and stop
-network attacks in real time on cheap hardware*:
+Two halves test one idea — *whether a small, flow-based model can detect and
+help stop network attacks on constrained edge hardware*:
 
-1. **Live edge IDS/IPS** — a self-contained real-time sensor. It sniffs traffic,
+1. **Live edge IDS/IPS** — a streaming sensor prototype. It sniffs traffic,
    aggregates packets into bidirectional flows, and classifies each flow with a
-   ~96 KB ONNX model in **microseconds per flow**. It detects
+   91.8 KB ONNX model. On the audited Apple M4 host, single-flow inference took
+   11.1 microseconds; Raspberry Pi and MCU end-to-end performance remain
+   unvalidated. It detects
    **9 attack types across 4 categories**, reports aggregated per-source
    incidents, and can **actively block** offenders (IPS mode). The same model
    also compiles to a **dependency-free C header** for microcontrollers.
@@ -32,7 +34,7 @@ network attacks in real time on cheap hardware*:
    └────────────────────────────────────────────────────────────────────────────┘
        ▲ Mac / dev : synthetic labeled pcaps        (root-free demo)
        ▲ Pi  / live: scapy sniff on eth0 / wlan0    (systemd service, IPS)
-       ▲ MCU       : models/live_ids.h              (no runtime, ~42 KB const)
+       ▲ MCU       : models/live_ids.h              (no runtime, ~43 KB const)
 ```
 
 ### Attack taxonomy (hierarchical)
@@ -148,11 +150,13 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 
 | Metric | Value |
 |---|---|
-| Multiclass accuracy (10 classes) | **~100%** |
-| Attack detection rate (recall) | 100% |
+| Multiclass accuracy (10 classes) | **99.65%** |
+| Macro F1 | 0.9961 |
+| Attack detection rate (recall) | 100.00% |
 | Benign false-positive rate | **0.0%** |
-| Model size (ONNX / C const-data) | ~96 KB / ~46 KB |
-| Inference | ~6 µs/flow |
+| Mirai recall | 94.2% |
+| Model size (ONNX / C const-data) | 91.8 KB / ~43 KB |
+| Host ONNX inference | 11.1 µs/flow (p99 19.7 µs) |
 
 > **Read this number as a property of the generators, not of the detector.**
 > Three things were checked to find out what the ~100% actually means, and all
@@ -171,10 +175,10 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 > What remains is the honest explanation: **the synthetic corpus is trivially
 > separable**, along several redundant axes at once. That is why no correction
 > moves the number. It cannot be quoted as real-world accuracy — for that, see
-> the cross-dataset study below, and the open work to validate on real labelled
-> IoT-23 captures.
+> the cross-dataset study below, and the open work to validate on a real
+> labelled packet capture compatible with the 22-feature extractor.
 
-### Cross-dataset generalization (the honest real-world number)
+### Cross-dataset generalization (protocol corrected; rerun pending)
 
 Eleven datasets align to the 12-feature space. The corrected protocol trains on
 a fixed 80% split of each source, tests the diagonal on its untouched 20%, and
@@ -182,11 +186,12 @@ tests off-diagonal cells on independent datasets (`code/cross_dataset_eval.py`).
 ROC-AUC and MCC rather than F1, because each test set is ~50/50 balanced and a
 classifier that answers "attack" to everything scores F1 = 0.667:
 
-The previous run's mean off-diagonal ROC-AUC was 0.509 over 110 ordered pairs,
-which remains evidence of severe domain shift. Its 0.995 diagonal, however, was
-measured on training rows, so the quoted 0.487 gap and every downstream exact
-claim have been withdrawn. Row-retention, Bot-IoT sampling, IoT-23 cache
-invalidation, and small-budget calibration were corrected at the same time.
+The historical run's mean off-diagonal ROC-AUC was 0.509 over 110 ordered
+pairs, but its 0.995 diagonal was measured on training rows. The quoted gap and
+every downstream exact claim are therefore withdrawn; 0.509 is retained only
+as historical evidence that motivated the corrected rerun. Row-retention,
+Bot-IoT sampling, IoT-23 cache invalidation, and small-budget calibration were
+corrected at the same time.
 
 The external dataset mount is currently unavailable, so publishing replacement
 numbers would be fabrication. The affected artifacts are quarantined under
@@ -197,11 +202,12 @@ numbers would be fabrication. The affected artifacts are quarantined under
 
 | | |
 |---|---|
-| ONNX inference | 10 µs/flow single, **381k flows/s** batched |
-| Native C model | **1.15 µs/flow**, ~130 B RAM, zero deps |
-| Feature extraction | ~248k packets/s |
-| Daemon memory | **56 MB** (onnxruntime + numpy) |
-| Model size | 90 KB ONNX / 42 KB C const |
+| ONNX inference | 11.1 µs/flow single (p99 19.7), **399,270 flows/s** at batch 1024 |
+| Native C model | **1.111 µs/flow**, 899,964 flows/s, ~130 B stack, zero deps |
+| Feature extraction | 208,465 packets/s; 54,586 flows/s |
+| End to end | 51,321 flows/s |
+| Daemon memory | **56.6 MB** (onnxruntime + numpy) |
+| Model size | 91.8 KB ONNX / ~43 KB C const |
 
 The host benchmark is encouraging, but Raspberry Pi throughput remains an
 unvalidated projection until the hardware acceptance run is captured. Full
@@ -271,7 +277,7 @@ legacy/                superseded work, kept for the record — see
                        feature-alignment and metric findings) and the three
                        original notebooks.
 models/
-  live_ids.onnx        deployable edge model (~96 KB, raw features — trees are
+  live_ids.onnx        deployable edge model (91.8 KB, raw features — trees are
                        scale-invariant, so there is no scaler to drift)
   live_ids.h           dependency-free C model for microcontrollers
   live_meta.json       purpose, feature contract, labels, metrics, evidence scope

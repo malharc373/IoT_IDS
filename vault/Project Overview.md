@@ -6,15 +6,18 @@ date: 2026-08-19
 
 # Project Overview
 
-**IoT-IDS** is a B.Tech project in two halves, sharing one thesis: *a small,
-flow-based model can detect and stop network attacks in real time on cheap
-hardware.*
+**IoT-IDS** is a B.Tech project in two halves testing one thesis: *whether a
+small, flow-based model can detect and help stop network attacks on constrained
+edge hardware.* The software path is implemented; target-hardware and
+real-traffic validation are still acceptance gates.
 
 ## Half 1 — the live edge IDS/IPS
 
-A self-contained real-time sensor. It sniffs traffic, aggregates packets into
-bidirectional flows, and classifies each flow with a ~96 KB ONNX model in
-microseconds. It detects **9 attack types across 4 categories**, reports
+A streaming sensor prototype. It sniffs traffic, aggregates packets into
+bidirectional flows, and classifies each flow with a 91.8 KB ONNX model. The
+audited Apple M4 run measured 11.1 microseconds per single-flow inference;
+that is not a Raspberry Pi or MCU measurement. It detects **9 attack types
+across 4 categories**, reports
 aggregated per-source incidents, and can actively throttle or block offenders.
 The same model compiles to a dependency-free C header for ESP32-class
 microcontrollers.

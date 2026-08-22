@@ -18,6 +18,9 @@ The published 0.995 in-domain AUC and 0.487 gap are therefore resubstitution
 artifacts. The 2026-08-22 audit also changed row retention, Bot-IoT sampling,
 IoT-23 cache invalidation and small-budget threshold handling, so all exact
 tables are quarantined together until a full rerun is possible.
+The directory's `models/` contains the associated 12-feature binary ONNX and
+metadata. They are research artifacts and are not compatible with the live
+22-feature daemon.
 
 ## `pre-remediation-results/`
 

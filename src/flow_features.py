@@ -38,6 +38,7 @@ ETH_IPV4 = 0x0800
 ETH_IPV6 = 0x86DD
 ETH_VLAN = 0x8100
 ETH_QINQ = 0x88A8
+LINKTYPE_ETHERNET = 1
 
 # IPv6 extension headers to walk past to reach the transport header
 _V6_EXT = {0, 43, 44, 51, 60, 135}   # hop-by-hop, routing, fragment, AH, dstopts, mobility
@@ -84,6 +85,10 @@ FEATURE_NAMES: List[str] = [
     "dst_port",             # service port the initiator targeted (23/1883/53/…)
 ]
 N_FEATURES = len(FEATURE_NAMES)
+# Increment whenever feature *semantics* change without changing names/order.
+# Version 2 anchors fwd/bwd and dst_port to the observed connection initiator;
+# version 1 incorrectly used lexicographic endpoint ordering.
+FEATURE_CONTRACT_VERSION = 2
 
 
 # ── Packet parsing ────────────────────────────────────────────────────────────
@@ -117,6 +122,11 @@ def parse_raw(raw: bytes, orig_len: Optional[int] = None) -> Optional[dict]:
         if ihl < 20 or len(ip) < ihl:
             return None
         proto = ip[9]
+        frag = struct.unpack("!H", ip[6:8])[0]
+        # A non-initial fragment has no transport header. Treating its first
+        # payload bytes as ports corrupts flow identity and directional stats.
+        if frag & 0x1FFF:
+            return None
         src_ip = socket.inet_ntoa(ip[12:16])
         dst_ip = socket.inet_ntoa(ip[16:20])
         payload = ip[ihl:]
@@ -135,7 +145,13 @@ def parse_raw(raw: bytes, orig_len: Optional[int] = None) -> Optional[dict]:
             if proto not in _V6_EXT or len(payload) < 8:
                 break
             if proto == 44:                      # fragment header: fixed 8 bytes
+                # Non-initial fragments do not contain a transport header.
+                frag = struct.unpack("!H", payload[2:4])[0]
+                if frag & 0xFFF8:
+                    return None
                 nxt, hlen = payload[0], 8
+            elif proto == 51:                    # AH: (Payload Len + 2) * 4
+                nxt, hlen = payload[0], (payload[1] + 2) * 4
             else:
                 nxt, hlen = payload[0], (payload[1] + 1) * 8
             if len(payload) < hlen:
@@ -175,14 +191,18 @@ def normalize_scapy(pkt) -> Optional[dict]:
     """
     try:
         from scapy.layers.inet import IP, TCP, UDP, ICMP
-        from scapy.layers.inet6 import IPv6, ICMPv6EchoRequest  # noqa: F401
+        from scapy.layers.inet6 import IPv6, IPv6ExtHdrFragment
     except Exception:
         return None
     if IP in pkt:
         ip = pkt[IP]
+        if int(getattr(ip, "frag", 0)) > 0:
+            return None
         proto = ip.proto
     elif IPv6 in pkt:
         ip = pkt[IPv6]
+        if IPv6ExtHdrFragment in pkt and int(pkt[IPv6ExtHdrFragment].offset) > 0:
+            return None
         proto = ip.nh
     else:
         return None
@@ -230,7 +250,7 @@ def read_pcapng(filename: str) -> List[tuple]:
     out = []
     with open(filename, "rb") as f:
         endian = "<"
-        # per-interface (snaplen, ts divisor); index is the interface id
+        # per-interface (linktype, snaplen, ts divisor); index is interface id
         ifaces: List[tuple] = []
         while True:
             hdr = f.read(8)
@@ -258,6 +278,7 @@ def read_pcapng(filename: str) -> List[tuple]:
                 break
 
             if btype == 0x00000001:         # Interface Description Block
+                linktype = struct.unpack(endian + "H", body[0:2])[0] if len(body) >= 2 else -1
                 snaplen = struct.unpack(endian + "I", body[4:8])[0] if len(body) >= 8 else 0
                 divisor = 1e6               # if_tsresol default: microseconds
                 opt = body[8:]
@@ -270,14 +291,20 @@ def read_pcapng(filename: str) -> List[tuple]:
                         r = val[0]
                         divisor = float(2 ** (r & 0x7F)) if r & 0x80 else float(10 ** r)
                     opt = opt[4 + olen + ((-olen) % 4):]
-                ifaces.append((snaplen, divisor))
+                ifaces.append((linktype, snaplen, divisor))
 
             elif btype == 0x00000006:       # Enhanced Packet Block
                 if len(body) < 20:
                     continue
                 iid, ts_hi, ts_lo, cap_len, orig_len = struct.unpack(
                     endian + "IIIII", body[0:20])
-                divisor = ifaces[iid][1] if iid < len(ifaces) else 1e6
+                if iid >= len(ifaces):
+                    raise ValueError(f"{filename}: packet references unknown interface {iid}")
+                linktype, _snaplen, divisor = ifaces[iid]
+                if linktype != LINKTYPE_ETHERNET:
+                    raise ValueError(
+                        f"{filename}: unsupported pcapng link type {linktype}; "
+                        "only Ethernet (DLT_EN10MB/LINKTYPE_ETHERNET) is supported")
                 ts = ((ts_hi << 32) | ts_lo) / divisor
                 out.append((ts, body[20:20 + cap_len], orig_len))
 
@@ -285,7 +312,13 @@ def read_pcapng(filename: str) -> List[tuple]:
                 if len(body) < 4:
                     continue
                 orig_len = struct.unpack(endian + "I", body[0:4])[0]
-                snaplen = ifaces[0][0] if ifaces else 0
+                if not ifaces:
+                    raise ValueError(f"{filename}: simple packet block has no interface")
+                linktype, snaplen, _divisor = ifaces[0]
+                if linktype != LINKTYPE_ETHERNET:
+                    raise ValueError(
+                        f"{filename}: unsupported pcapng link type {linktype}; "
+                        "only Ethernet (DLT_EN10MB/LINKTYPE_ETHERNET) is supported")
                 cap_len = min(orig_len, snaplen) if snaplen else orig_len
                 out.append((0.0, body[4:4 + cap_len], orig_len))
     return out
@@ -311,6 +344,12 @@ def read_pcap(filename: str) -> List[tuple]:
                 f"{filename}: not a pcap or pcapng file "
                 f"(magic 0x{magic:08X}). Classic pcap and pcapng are supported.")
         endian = "<" if magic in (0xA1B2C3D4, 0xA1B23C4D) else ">"
+        ts_divisor = 1e9 if magic in (0xA1B23C4D, 0x4D3CB2A1) else 1e6
+        linktype = struct.unpack(endian + "I", hdr[20:24])[0]
+        if linktype != LINKTYPE_ETHERNET:
+            raise ValueError(
+                f"{filename}: unsupported pcap link type {linktype}; only "
+                "Ethernet (DLT_EN10MB/LINKTYPE_ETHERNET) is supported")
         while True:
             rec = f.read(16)
             if len(rec) < 16:
@@ -322,7 +361,7 @@ def read_pcap(filename: str) -> List[tuple]:
             # orig_len is the on-the-wire length; incl_len is what the snaplen
             # let through. Callers need the former or every length-derived
             # feature shrinks silently on a snaplen'd capture (F16).
-            out.append((ts_sec + ts_usec / 1e6, raw, orig_len))
+            out.append((ts_sec + ts_usec / ts_divisor, raw, orig_len))
     return out
 
 
@@ -450,7 +489,12 @@ class Flow:
 # ── Flow table ────────────────────────────────────────────────────────────────
 def _flow_key(pkt):
     """Canonical bidirectional key: sort the two endpoints so A→B and B→A map
-    to the same flow. Returns (key, forward_bool)."""
+    to the same flow.
+
+    The boolean describes only whether this packet matches the canonical sort
+    order. It must never be used as packet direction: canonical ordering is a
+    storage detail, while forward means initiator → responder.
+    """
     a = (pkt["src_ip"], pkt["src_port"])
     b = (pkt["dst_ip"], pkt["dst_port"])
     if a <= b:
@@ -500,15 +544,37 @@ class FlowTable:
 
     def add_packet(self, pkt: dict, ts: float):
         with self.lock:
-            key, forward = _flow_key(pkt)
+            key, _canonical_order = _flow_key(pkt)
             uk = self.active.get(key)
             f = self.flows.get(uk) if uk is not None else None
             if f is None or self._starts_new_flow(f, pkt, ts):
                 gen = self._gen[key]
                 self._gen[key] = gen + 1
                 uk = (key, gen)
-                f = Flow(pkt, ts)
+                # First observed sender is the best general fallback for a
+                # partial capture. A SYN+ACK is the one case that proves the
+                # first sender is the responder, so orient that flow in reverse.
+                syn_ack = (pkt["proto"] == PROTO_TCP
+                           and (pkt["flags"] & (SYN | ACK)) == (SYN | ACK))
+                if syn_ack:
+                    initiator = dict(pkt)
+                    initiator["src_ip"], initiator["dst_ip"] = (
+                        pkt["dst_ip"], pkt["src_ip"])
+                    initiator["src_port"], initiator["dst_port"] = (
+                        pkt["dst_port"], pkt["src_port"])
+                    f = Flow(initiator, ts)
+                    forward = False
+                else:
+                    f = Flow(pkt, ts)
+                    forward = True
                 self.flows[uk] = f
+            else:
+                forward = (
+                    pkt["src_ip"] == f.src_ip
+                    and pkt["src_port"] == f.src_port
+                    and pkt["dst_ip"] == f.dst_ip
+                    and pkt["dst_port"] == f.dst_port
+                )
             self.active[key] = uk
             f.update(pkt, ts, forward)
 

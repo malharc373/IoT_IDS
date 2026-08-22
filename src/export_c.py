@@ -108,6 +108,7 @@ def generate_header(meta, df):
 #define LIVE_IDS_H
 
 #define IDS_NUM_FEATURES {nf}
+#define IDS_FEATURE_CONTRACT_VERSION {meta["feature_contract_version"]}
 #define IDS_NUM_CLASS {nc}
 #define IDS_NUM_TREES {len(roots)}
 #define IDS_NUM_NODES {len(nodes)}

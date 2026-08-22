@@ -36,6 +36,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 from flow_features import (  # noqa: E402
     FlowTable, parse_raw, normalize_scapy, read_pcap, FEATURE_NAMES,
+    FEATURE_CONTRACT_VERSION,
 )
 
 MODELS = os.path.join(ROOT, "models")
@@ -68,6 +69,9 @@ class Detector:
         self.categories = self.meta.get("categories", {})
         CATEGORIES.update(self.categories)
         assert self.meta["features"] == FEATURE_NAMES, "feature order mismatch!"
+        assert self.meta.get("feature_contract_version") == FEATURE_CONTRACT_VERSION, (
+            "feature semantics mismatch: retrain the model with the current "
+            "src/flow_features.py")
 
     def classify(self, vectors):
         if not vectors:

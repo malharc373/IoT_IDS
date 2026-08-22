@@ -205,6 +205,88 @@ def t_pcapng_reader():
         assert "not a pcap or pcapng" in str(e)
 
 
+def t_classic_pcap_resolution_and_linktype():
+    """Classic pcap honours ns magic and rejects non-Ethernet captures."""
+    import struct as _struct
+    import flow_features as ff
+    from scapy.all import Ether, IP, TCP
+
+    raw = bytes(Ether()/IP(src="10.0.0.1", dst="10.0.0.2")/
+                TCP(sport=12345, dport=443, flags="S"))
+
+    def write(path, magic, ticks, linktype=1):
+        hdr = magic + _struct.pack("<HHiiii", 2, 4, 0, 0, 65535, linktype)
+        recs = []
+        for sec, frac in ticks:
+            recs.append(_struct.pack("<IIII", sec, frac, len(raw), len(raw)) + raw)
+        with open(path, "wb") as f:
+            f.write(hdr + b"".join(recs))
+
+    ns = os.path.join(TMP, "classic-ns.pcap")
+    # little-endian nanosecond magic, with a 0.1-second interval
+    write(ns, b"\x4d\x3c\xb2\xa1", [(100, 0), (100, 100_000_000)])
+    rows = ff.read_pcap(ns)
+    assert abs((rows[1][0] - rows[0][0]) - 0.1) < 1e-9, rows
+
+    sll = os.path.join(TMP, "linux-cooked.pcap")
+    write(sll, b"\xd4\xc3\xb2\xa1", [(100, 0)], linktype=113)
+    try:
+        ff.read_pcap(sll)
+        raise AssertionError("Linux cooked capture was parsed as Ethernet")
+    except ValueError as e:
+        assert "unsupported pcap link type 113" in str(e)
+
+
+def t_flow_direction_is_initiator_relative():
+    """Canonical key sorting must not swap initiator/responder features."""
+    import flow_features as ff
+
+    def pkt(src, dst, sport, dport, length, flags=0):
+        return {"src_ip": src, "dst_ip": dst, "src_port": sport,
+                "dst_port": dport, "proto": ff.PROTO_TCP,
+                "length": length, "flags": flags}
+
+    # Lexicographic order deliberately opposes packet direction (z > a).
+    table = ff.FlowTable()
+    table.add_packet(pkt("z-client", "a-server", 50000, 443, 100, ff.SYN), 1.0)
+    table.add_packet(pkt("a-server", "z-client", 443, 50000, 1000,
+                         ff.SYN | ff.ACK), 1.1)
+    f = next(iter(table.flows.values()))
+    assert (f.src_ip, f.dst_ip, f.dst_port) == ("z-client", "a-server", 443)
+    assert (f.fwd_bytes, f.bwd_bytes) == (100, 1000), (
+        "endpoint sorting, not initiator direction, controls fwd/bwd")
+    vec = table.extract()[0][1]
+    assert vec[16] == 0.5 and vec[17] == round(1000 / 101, 4)
+    assert vec[21] == 443
+
+    # A capture beginning at SYN+ACK can still infer the true initiator.
+    table = ff.FlowTable()
+    table.add_packet(pkt("a-server", "z-client", 443, 50000, 1000,
+                         ff.SYN | ff.ACK), 2.0)
+    f = next(iter(table.flows.values()))
+    assert (f.src_ip, f.dst_ip, f.dst_port) == ("z-client", "a-server", 443)
+    assert (f.fwd_bytes, f.bwd_bytes) == (0, 1000)
+
+
+def t_fragment_parsing_is_safe():
+    """Non-initial fragments are not mistaken for transport headers."""
+    import flow_features as ff
+    from scapy.all import Ether, IP, IPv6, TCP, Raw
+    from scapy.layers.inet6 import IPv6ExtHdrFragment
+
+    v4 = Ether()/IP(src="1.1.1.1", dst="2.2.2.2", proto=6, frag=1)/Raw(load=b"x" * 32)
+    assert ff.parse_raw(bytes(v4)) is None
+    assert ff.normalize_scapy(v4) is None
+    v6 = (Ether()/IPv6(src="2001:db8::1", dst="2001:db8::2")/
+          IPv6ExtHdrFragment(nh=6, offset=1)/Raw(load=b"x" * 32))
+    assert ff.parse_raw(bytes(v6)) is None
+    assert ff.normalize_scapy(v6) is None
+
+    # First IPv4 fragment still carries and parses the transport header.
+    first = Ether()/IP(src="1.1.1.1", dst="2.2.2.2", flags="MF")/TCP(sport=9, dport=80)
+    assert ff.parse_raw(bytes(first))["dst_port"] == 80
+
+
 def t_tcp_teardown_splits_flows():
     """A 5-tuple reused after teardown becomes a new flow, not a merged one (F16)."""
     import flow_features as ff
@@ -657,6 +739,7 @@ def t_documented_counts_match_code():
     meta = _json.load(open(os.path.join(ROOT, "models", "live_meta.json")))
     assert meta["n_features"] == ff.N_FEATURES
     assert meta["features"] == ff.FEATURE_NAMES
+    assert meta["feature_contract_version"] == ff.FEATURE_CONTRACT_VERSION
     assert meta["num_class"] == len(tg.ATTACK_KINDS)
     # and records how it was evaluated, so the caveats travel with it
     assert "scenario" in meta.get("split", ""), "model does not record its split"
@@ -1183,6 +1266,9 @@ TESTS = [
         ("flow_features CLI", t_flow_features_cli),
         ("parse ipv6 / vlan / snaplen", t_parse_ipv6_vlan_snaplen),
         ("pcapng reader", t_pcapng_reader),
+        ("classic pcap resolution + linktype", t_classic_pcap_resolution_and_linktype),
+        ("flow direction is initiator-relative", t_flow_direction_is_initiator_relative),
+        ("fragment parsing is safe", t_fragment_parsing_is_safe),
         ("tcp teardown splits flows", t_tcp_teardown_splits_flows),
         ("flowtable window + dirty", t_flowtable_window_and_dirty),
         ("flowtable thread safety", t_flowtable_thread_safety),

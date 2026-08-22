@@ -26,6 +26,7 @@
     "dst_port"
   ],
   "n_features": 22,
+  "feature_contract_version": 2,
   "labels": {
     "0": "benign",
     "1": "portscan",
@@ -65,20 +66,20 @@
   "scaler": null,
   "onnx_input": "input",
   "metrics": {
-    "multiclass_accuracy": 0.9999,
-    "macro_f1": 0.9999,
-    "binary_accuracy": 0.9999,
-    "binary_f1_attack": 0.9999
+    "multiclass_accuracy": 1.0,
+    "macro_f1": 1.0,
+    "binary_accuracy": 1.0,
+    "binary_f1_attack": 1.0
   },
   "cap_per_class": 8000,
-  "n_train": 49445,
-  "n_test": 10405,
+  "n_train": 44761,
+  "n_test": 12191,
   "split": "GroupShuffleSplit on scenario (no scenario spans the split)",
-  "n_train_scenarios": 336,
-  "n_test_scenarios": 84,
+  "n_train_scenarios": 280,
+  "n_test_scenarios": 70,
   "ablation_no_dst_port": {
-    "multiclass_accuracy": 0.9999,
-    "macro_f1": 0.9999,
+    "multiclass_accuracy": 1.0,
+    "macro_f1": 1.0,
     "accuracy_delta": 0.0,
     "macro_f1_delta": 0.0
   }

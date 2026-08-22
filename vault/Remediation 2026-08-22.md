@@ -40,10 +40,10 @@ records the test evidence and commit that closed it.
 | R01 | P0 | Fresh Pi setup reads `RUN_USER` before assignment | verified | strict preflight + full suite |
 | R02 | P0 | Authenticated dashboard page does not authenticate API polls | verified | authenticated HTTP regression + full suite |
 | R03 | P0 | Remove secret-scanner-triggering CLI credential examples | verified | credential guard + source scan |
-| R04 | P0 | Correct initiator/responder flow direction semantics | open | retrain required |
-| R05 | P1 | Honor classic-pcap nanosecond timestamp resolution | open | pending |
-| R06 | P1 | Respect capture link type; reject unsupported types safely | open | pending |
-| R07 | P1 | Parse fragments and IPv6 extension headers safely | open | pending |
+| R04 | P0 | Correct initiator/responder flow direction semantics | verified | corpus/model regenerated; ONNX/C parity 100% |
+| R05 | P1 | Honor classic-pcap nanosecond timestamp resolution | verified | 0.1 s ns-PCAP regression |
+| R06 | P1 | Respect capture link type; reject unsupported types safely | verified | Ethernet validation + SLL rejection |
+| R07 | P1 | Parse fragments and IPv6 extension headers safely | verified | IPv4/IPv6 fragment regressions |
 | R08 | P1 | Bound live incident suppression state (`seen`) | open | pending |
 | R09 | P1 | Refresh IPS firewall timeout and persisted state | open | pending |
 | R10 | P1 | Make nft throttling per-source rather than shared | open | pending |
@@ -91,6 +91,49 @@ Evidence at this checkpoint:
 pytest tests/ -v  -> 46 passed in 12.98s
 ruff check .      -> All checks passed
 ```
+
+### 2026-08-22 — R04–R07 verified
+
+- **R04:** canonical endpoint sorting remains only the bidirectional dictionary
+  key. Packet direction is now relative to the `Flow` initiator. The first
+  observed sender is used for partial captures, except a first SYN+ACK reverses
+  orientation because it proves the sender is the responder. The reproduced
+  request/response case now records 100 forward bytes and 1,000 backward bytes,
+  with target port 443. A `FEATURE_CONTRACT_VERSION` now travels in model
+  metadata and the C header; the daemon refuses a semantically stale model even
+  when feature names and order are unchanged.
+- **R05:** classic pcap magic selects a 10^6 or 10^9 timestamp divisor. A
+  hand-built nanosecond capture with a 100,000,000-tick interval decodes as
+  0.1 seconds instead of 100 seconds.
+- **R06:** classic pcap and pcapng readers validate their link type. Unsupported
+  Linux cooked, loopback, radiotap and other capture formats now fail with an
+  explicit error rather than being silently decoded as Ethernet. Supporting
+  those link-layer headers remains future extensibility, but unsafe parsing is
+  closed.
+- **R07:** non-initial IPv4 and IPv6 fragments are ignored instead of treating
+  payload bytes as ports; first fragments still parse normally. IPv6 AH uses
+  its RFC length formula. The Scapy live path applies the same fragment rule.
+
+The entire synthetic corpus was regenerated after the semantic fix before any
+model was accepted. Results and artifacts were regenerated in dependency order:
+
+```text
+corpus                  125,835 flows / 350 scenarios
+scenario-held-out test  12,191 flows / 70 unseen scenarios / macro-F1 1.0000
+independent demo seeds  47,485 flows / attack recall 100% / benign FPR 0%
+ONNX vs sklearn         100.00% agreement on 5,000 flows
+C vs XGBoost            100.00% agreement on 525 flows
+pytest tests/ -q        49 passed in 13.13s
+ruff check .            All checks passed
+```
+
+New ONNX SHA-256:
+`4b5e7a9a168bc7cde0d01803e5bc18ea27ae029f4c76ae6946dbcd62746fff05`.
+
+> [!caution] The perfect validation number is still evidence about the
+> synthetic generator, not real-network generalisation. R21 remains open. Also,
+> a capture that begins midstream without a handshake cannot prove connection
+> initiator; the first observed sender is explicitly a fallback, not certainty.
 
 ## External blockers and boundaries
 

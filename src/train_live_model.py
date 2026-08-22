@@ -80,7 +80,8 @@ from xgboost import XGBClassifier
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-from flow_features import FEATURE_NAMES, N_FEATURES  # noqa: E402
+from flow_features import (FEATURE_NAMES, N_FEATURES,
+                           FEATURE_CONTRACT_VERSION)  # noqa: E402
 
 DATA = os.path.join(ROOT, "data", "processed", "flows.parquet")
 MODELS = os.path.join(ROOT, "models")
@@ -256,6 +257,7 @@ def main():
         "type": "xgboost-multiclass",
         "features": FEATURE_NAMES,
         "n_features": N_FEATURES,
+        "feature_contract_version": FEATURE_CONTRACT_VERSION,
         "labels": {str(i): k for i, k in enumerate(kinds)},
         "categories": {k: tg.CATEGORY.get(k, "attack") for k in kinds},
         "attack_labels": [k for k in kinds if k != "benign"],

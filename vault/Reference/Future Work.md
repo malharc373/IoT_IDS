@@ -90,9 +90,10 @@ so real data has to come first.
 
 ### 7. Real Raspberry Pi measurements
 
-`demo/benchmark.py` still projects Pi figures as `PI_FACTOR = 12.0` × host. The
-hardware path is built and the services install; one real run replaces a guessed
-constant in the results table with a measured one.
+Numerical host-to-Pi projection has been removed from `demo/benchmark.py`; a
+non-Pi host now reports only an acceptance gate. The hardware path is built and
+the services install. Run the benchmark and 24-hour passive soak in
+`deploy/PI_ACCEPTANCE.md` on the actual target before publishing Pi figures.
 
 ### ~~8. Inline (bridge) deployment guide~~ — **done**
 
@@ -149,9 +150,9 @@ the general property does not yet have a harness.
 
 ### 14. Real Pi measurement now has a second reason
 
-Beyond replacing `PI_FACTOR = 12.0` (item 7), a multi-hour run on real hardware
-is the only thing that would have surfaced F20 without reading the code. A soak
-test is the cheap proxy; the Pi is the real one.
+Beyond closing item 7, a multi-hour run on real hardware is the only thing that
+would have surfaced F20 without reading the code. A soak test is the cheap
+proxy; the Pi is the real one.
 
 ## Related
 

@@ -15,7 +15,7 @@ real-traffic validation are still acceptance gates.
 
 A streaming sensor prototype. It sniffs traffic, aggregates packets into
 bidirectional flows, and classifies each flow with a 91.8 KB ONNX model. The
-audited Apple M4 run measured 11.1 microseconds per single-flow inference;
+current Apple M4 snapshot measured 8.1 microseconds per single-flow inference;
 that is not a Raspberry Pi or MCU measurement. It detects **9 attack types
 across 4 categories**, reports
 aggregated per-source incidents, and can actively throttle or block offenders.

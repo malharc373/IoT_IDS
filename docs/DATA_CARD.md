@@ -51,3 +51,5 @@ whether any device, scenario, or capture can leak across a split.
 R21 needs a legally usable, labelled packet capture whose ground truth can be
 joined to rows emitted by `src/flow_features.py`. Report per-family recall,
 benign false-positive rate, unknown-family behavior, and grouping strategy.
+The executable evidence requirements and split/join safeguards are specified in
+[`REAL_TRAFFIC_ACCEPTANCE.md`](REAL_TRAFFIC_ACCEPTANCE.md).

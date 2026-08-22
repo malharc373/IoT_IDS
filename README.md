@@ -10,7 +10,7 @@ help stop network attacks on constrained edge hardware*:
 1. **Live edge IDS/IPS** — a streaming sensor prototype. It sniffs traffic,
    aggregates packets into bidirectional flows, and classifies each flow with a
    91.8 KB ONNX model. On the audited Apple M4 host, single-flow inference took
-   11.1 microseconds; Raspberry Pi and MCU end-to-end performance remain
+   8.1 microseconds in the current benchmark snapshot; Raspberry Pi and MCU end-to-end performance remain
    unvalidated. It detects
    **9 attack types across 4 categories**, reports aggregated per-source
    incidents, and can **actively block** offenders (IPS mode). The same model
@@ -119,6 +119,8 @@ environment with ReportLab) using `python reports/build_report.py`.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — verification and evidence rules
 - [`models/README.md`](models/README.md) — live/research model cards and artifact contract
 - [`docs/DATA_CARD.md`](docs/DATA_CARD.md) — provenance, limitations, privacy and missing acceptance data
+- [`docs/REAL_TRAFFIC_ACCEPTANCE.md`](docs/REAL_TRAFFIC_ACCEPTANCE.md) — real-capture evidence gate
+- [`deploy/PI_ACCEPTANCE.md`](deploy/PI_ACCEPTANCE.md) — target identity, benchmark and soak protocol
 
 No open-source license has been selected yet. The absence of a license means no
 permission to copy, modify, or redistribute is granted; the owner must make an
@@ -167,7 +169,7 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 | Benign false-positive rate | **0.0%** |
 | Mirai recall | 94.2% |
 | Model size (ONNX / C const-data) | 91.8 KB / ~43 KB |
-| Host ONNX inference | 11.1 µs/flow (p99 19.7 µs) |
+| Host ONNX inference | 8.1 µs/flow (p99 11.2 µs) |
 
 > **Read this number as a property of the generators, not of the detector.**
 > Three things were checked to find out what the ~100% actually means, and all
@@ -213,11 +215,11 @@ numbers would be fabrication. The affected artifacts are quarantined under
 
 | | |
 |---|---|
-| ONNX inference | 11.1 µs/flow single (p99 19.7), **399,270 flows/s** at batch 1024 |
-| Native C model | **1.111 µs/flow**, 899,964 flows/s, ~130 B stack, zero deps |
-| Feature extraction | 208,465 packets/s; 54,586 flows/s |
-| End to end | 51,321 flows/s |
-| Daemon memory | **56.6 MB** (onnxruntime + numpy) |
+| ONNX inference | 8.1 µs/flow single (p99 11.2), **403,058 flows/s** at batch 512 |
+| Native C model | **1.136 µs/flow**, 880,460 flows/s, ~130 B stack, zero deps |
+| Feature extraction | 215,601 packets/s; 56,455 flows/s |
+| End to end | 52,249 flows/s |
+| Daemon memory | **55.1 MB** (onnxruntime + numpy) |
 | Model size | 91.8 KB ONNX / ~43 KB C const |
 
 The host benchmark is encouraging, but Raspberry Pi throughput remains an

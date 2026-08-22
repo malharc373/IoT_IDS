@@ -57,8 +57,8 @@ records the test evidence and commit that closed it.
 | R18 | P1 | Declare complete/reproducible dependencies and lock strategy | verified | fresh-venv suite + lock freshness |
 | R19 | P1 | Replace stale report and presentation with editable sources | verified | PDF/PPTX render QA + editable sources |
 | R20 | P1 | Reconcile README, vault, daemon, model-card claims | verified | claim guard + full suite |
-| R21 | P2 | Add real labelled-traffic and group-split experiments | blocked externally | dataset/hardware |
-| R22 | P2 | Run actual Raspberry Pi performance/soak measurements | blocked externally | Pi required |
+| R21 | P2 | Add real labelled-traffic and group-split experiments | protocol ready; blocked externally | labelled pcap required |
+| R22 | P2 | Run actual Raspberry Pi performance/soak measurements | protocol ready; blocked externally | Pi required |
 | R23 | P1 | Add license, model/data cards, branch protection, security settings | partial; owner decision | controls verified; license choice pending |
 | R24 | P2 | Remove historical large binaries from Git history | decision required | coordinated rewrite |
 
@@ -335,7 +335,7 @@ PPTX                      -> 11 slides rendered and inspected at full size
 slides_test.py            -> no overflow detected
 manual corrections       -> title/rule collisions, label wraps, chart ticks fixed
 fresh-venv suite         -> 58 passed in 13.74s; Ruff clean
-PDF SHA-256              -> 9c2a8f24bb0b47d9faff644579f43e2e856f52f8b6ecbd8797406f47bf007c55
+PDF SHA-256              -> a43c2dfd323a41be74602a430b185752323dfaa9d12d3f4eb4885e9520e2ae39
 PPTX SHA-256             -> cc49b2d9e99b7b89e4f7f90a8b914de22680dbbad230c4499e8ac2d238daf91e
 ```
 
@@ -394,6 +394,39 @@ pytest tests/test_suite.py -q    -> 60 passed in 13.34s
 ruff check .                    -> All checks passed
 workflow + Dependabot YAML      -> parsed successfully
 GitHub protection/settings API  -> applied and read back
+```
+
+### 2026-08-22 — R21/R22 external acceptance prepared
+
+The unavailable evidence is no longer represented by a vague future-work line:
+
+- `docs/REAL_TRAFFIC_ACCEPTANCE.md` specifies packet/label provenance, privacy,
+  immutable hashes, group isolation, exact live feature extraction, fail-closed
+  label joins, required metrics, and the boundary between evaluation and
+  threshold calibration.
+- `deploy/PI_ACCEPTANCE.md` specifies device identity, artifact hashes, raw
+  benchmark retention, a minimum 24-hour passive soak, resource/thermal/drop
+  observations, and the result fields required for publication.
+- `demo/benchmark.py` no longer emits host-times-12 Pi estimates. On non-Pi
+  hardware it prints only an acceptance gate. ARM Linux is not sufficient to
+  claim a Pi run: the device tree must explicitly identify Raspberry Pi
+  hardware, covered by a regression.
+
+The Apple M4 benchmark was rerun after removing projection. Its current snapshot
+is 8.1 microseconds mean single-flow ONNX latency (p99 11.2), 403,058 flows/s at
+batch 512, 215,601 packets/s parse-plus-aggregate, 52,249 flows/s end to end,
+and 55.1 MB daemon RSS. These remain host-only and run-to-run timings. The PDF
+was rebuilt to describe its earlier audited 14:18 snapshot as a snapshot rather
+than “latest,” and to reflect completed governance controls.
+
+Evidence:
+
+```text
+pytest tests/test_suite.py -q -> 61 passed
+benchmark section 8          -> NOT MEASURED; projection intentionally omitted
+PDF visual QA                -> 6 rendered pages inspected; no clipping
+PDF deterministic rebuild   -> identical SHA-256 on two consecutive builds
+PDF SHA-256                  -> a43c2dfd323a41be74602a430b185752323dfaa9d12d3f4eb4885e9520e2ae39
 ```
 
 ## External blockers and boundaries

@@ -195,6 +195,7 @@ def build():
     styles = _styles()
     doc = BaseDocTemplate(str(OUTPUT), pagesize=A4, title="IoT-IDS Corrected Technical Report",
                           author="Mahi Patel, Malhar Falke, Yugandhar Pise, Vaibhav Tayade",
+                          invariant=1,
                           leftMargin=18 * mm, rightMargin=18 * mm,
                           topMargin=18 * mm, bottomMargin=20 * mm)
     frame = Frame(doc.leftMargin, doc.bottomMargin, doc.width, doc.height, id="body")

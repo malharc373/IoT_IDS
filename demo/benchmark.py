@@ -3,8 +3,8 @@
 benchmark.py — full system benchmark: accuracy, speed, efficiency, footprint.
 
 Measures the live edge IDS end-to-end on real artifacts and writes a report to
-demo/results/BENCHMARK.md (+ latency chart). All numbers are measured here, not
-assumed; Raspberry Pi figures are the host measurement scaled by PI_FACTOR.
+demo/results/BENCHMARK.md (+ latency chart). All published numbers are measured
+on the named host; a non-Pi run does not invent target-hardware estimates.
 
 Sections:
   1. Model parameters      trees / nodes / features / classes / sizes
@@ -14,7 +14,7 @@ Sections:
   5. End-to-end            pcap -> verdicts wall time
   6. Accuracy              held-out multiclass acc, macro-F1, per-class recall, FPR
   7. Memory footprint      process RSS + model RAM
-  8. Raspberry Pi estimate host latency x PI_FACTOR
+  8. Target-hardware identity / acceptance gate
 """
 from __future__ import annotations
 
@@ -33,10 +33,6 @@ sys.path.insert(0, os.path.join(ROOT, "attacks"))
 MODELS = os.path.join(ROOT, "models")
 RESULTS = os.path.join(ROOT, "demo", "results")
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
-
-# Raspberry Pi 4 is ~10-15x slower than a modern laptop core on this workload;
-# use a conservative 12x to project. Replace with a real Pi run when available.
-PI_FACTOR = 12.0
 
 REPORT = []
 def out(s=""):
@@ -331,34 +327,36 @@ def bench_memory():
     return rss
 
 
-# ── 8. Pi projection ──────────────────────────────────────────────────────────
-def bench_pi(lat_rows, c_ns, extract):
-    section("8. UNVALIDATED RASPBERRY PI 4 PROJECTION (host x %.0f)" % PI_FACTOR)
-    single_us = lat_rows[0][1] * 1000
-    host_cpu = "Apple M4"
-    try:
-        host_cpu = subprocess.check_output(
-            ["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip()
-    except Exception:
-        host_cpu = platform.processor() or platform.machine()
-    out(f"  host                   : {host_cpu} ({platform.machine()})")
-    out(f"  ONNX single-flow (Pi)  : ~{single_us*PI_FACTOR:.1f} us/flow "
-        f"(~{1e6/(single_us*PI_FACTOR):,.0f} flows/s)")
-    if c_ns:
-        out(f"  C model (Pi)           : ~{c_ns*PI_FACTOR/1000:.2f} us/flow "
-            f"(~{1e9/(c_ns*PI_FACTOR):,.0f} flows/s)")
-    if extract:
-        npk, nfl, tp = extract
-        out(f"  feature extraction (Pi): ~{npk/tp/PI_FACTOR:,.0f} packets/s "
-            f"(the real bottleneck on a live link)")
-    out("  status                 : estimate only — PI_FACTOR is not a measurement.")
-    out("  acceptance gate        : run this benchmark on the target Pi and publish "
-        "the raw output before making a real-time throughput claim.")
+# ── 8. target identity ────────────────────────────────────────────────────────
+def bench_target_gate():
+    section("8. TARGET-HARDWARE ACCEPTANCE GATE")
+    out(f"  measured host          : {platform.platform()}")
+    out("  Raspberry Pi result    : NOT MEASURED")
+    out("  projection             : intentionally omitted; host scaling is not evidence")
+    out("  acceptance gate        : run this benchmark on the target Pi and retain "
+        "the identity, hashes, raw output and soak record in deploy/PI_ACCEPTANCE.md")
+
+
+def _pi_model():
+    """Return the hardware model only when Linux identifies a Raspberry Pi.
+
+    Architecture alone is insufficient: ARM Linux also includes cloud VMs,
+    servers and other SBCs whose measurements must not be published as Pi data.
+    """
+    if platform.system() != "Linux":
+        return None
+    for path in ("/proc/device-tree/model", "/sys/firmware/devicetree/base/model"):
+        try:
+            model = open(path, "rb").read().decode("utf-8", "replace").strip("\x00\n ")
+        except OSError:
+            continue
+        if "Raspberry Pi" in model:
+            return model
+    return None
 
 
 def _is_pi():
-    return platform.machine().lower() in ("aarch64", "armv7l", "armv6l") and \
-        platform.system() == "Linux"
+    return _pi_model() is not None
 
 
 FAILED_SECTIONS = []
@@ -393,16 +391,17 @@ def main():
     out(f"python={platform.python_version()}  time={time.strftime('%Y-%m-%d %H:%M')}")
     meta, sizes, n_trees, n_nodes = bench_params()
     lat = bench_latency(meta["n_features"])
-    c_ns = _guard(bench_c, meta["n_features"])
-    extract = _guard(bench_extract)
+    _guard(bench_c, meta["n_features"])
+    _guard(bench_extract)
     _guard(bench_e2e)
     _guard(bench_accuracy)
     _guard(bench_memory)
     if _is_pi():
         section("8. HOST IS A RASPBERRY PI — numbers above are REAL, not projected")
+        out(f"  hardware               : {_pi_model()}")
         out("  These are measured on the Pi itself; no scaling applied.")
     else:
-        bench_pi(lat, c_ns, extract)
+        bench_target_gate()
 
     with open(os.path.join(RESULTS, "BENCHMARK.md"), "w") as f:
         f.write("# IoT-IDS system benchmark\n\n```\n" + "\n".join(REPORT) + "\n```\n")

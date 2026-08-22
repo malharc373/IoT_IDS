@@ -1397,6 +1397,25 @@ def t_benchmark_params():
     assert "live_ids.onnx" in sizes and sizes["live_ids.onnx"] > 0
 
 
+def t_pi_detection_requires_device_identity():
+    """An arbitrary ARM Linux host must never be reported as Raspberry Pi."""
+    import importlib.util
+    from unittest import mock
+    spec = importlib.util.spec_from_file_location(
+        "bench_pi_identity", os.path.join(ROOT, "demo", "benchmark.py"))
+    b = importlib.util.module_from_spec(spec); spec.loader.exec_module(b)
+    with mock.patch.object(b.platform, "system", return_value="Linux"), \
+            mock.patch("builtins.open", side_effect=OSError("no device tree")):
+        assert b._pi_model() is None and not b._is_pi()
+    fake = io.BytesIO(b"Raspberry Pi 4 Model B Rev 1.5\x00")
+    with mock.patch.object(b.platform, "system", return_value="Linux"), \
+            mock.patch("builtins.open", return_value=fake):
+        assert b._pi_model() == "Raspberry Pi 4 Model B Rev 1.5"
+    source = open(os.path.join(ROOT, "demo", "benchmark.py"), encoding="utf-8").read()
+    assert "PI_FACTOR" not in source
+    assert "intentionally omitted; host scaling is not evidence" in source
+
+
 def t_no_retracted_numbers_in_live_docs():
     """Retracted headline figures must not reappear outside legacy/.
 
@@ -1462,8 +1481,8 @@ def t_current_claims_are_evidence_scoped():
     assert not offenders, f"stale or unsupported current claims: {offenders}"
 
     readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
-    for supported in ["99.65%", "0.9961", "91.8 KB", "11.1 µs/flow",
-                      "399,270 flows/s", "Raspberry Pi throughput remains"]:
+    for supported in ["99.65%", "0.9961", "91.8 KB", "8.1 µs/flow",
+                      "403,058 flows/s", "Raspberry Pi throughput remains"]:
         assert supported in readme, f"README lost evidence/scope marker: {supported}"
 
 
@@ -1574,6 +1593,7 @@ TESTS = [
         ("shell script syntax", t_shell_syntax),
         ("Pi setup strict preflight", t_setup_pi_strict_preflight),
         ("benchmark params", t_benchmark_params),
+        ("Pi detection requires device identity", t_pi_detection_requires_device_identity),
         ("benchmark extraction section runs", t_benchmark_extraction_section_runs),
         ("no retracted numbers in live docs", t_no_retracted_numbers_in_live_docs),
         ("current claims are evidence scoped", t_current_claims_are_evidence_scoped),

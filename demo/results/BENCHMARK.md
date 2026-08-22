@@ -2,7 +2,7 @@
 
 ```
 IoT-IDS SYSTEM BENCHMARK   host=macOS-26.6.1-arm64-arm-64bit
-python=3.10.14  time=2026-08-22 14:18
+python=3.10.14  time=2026-08-22 15:12
 
 ====================================================================
   1. MODEL PARAMETERS & FOOTPRINT
@@ -27,35 +27,35 @@ python=3.10.14  time=2026-08-22 14:18
   2. ONNX INFERENCE LATENCY & THROUGHPUT
 ====================================================================
    batch   mean_ms   p50_ms   p99_ms   us/flow      flows/s
-       1    0.0111   0.0095   0.0197    11.081       90,247
-       8    0.0461   0.0451   0.1078     5.759      173,632
-      32    0.1648   0.1625   0.2537     5.150      194,165
-      64    0.1843   0.1796   0.2553     2.880      347,214
-     128    0.3390   0.3178   0.4523     2.649      377,530
-     512    1.2936   1.2302   1.6087     2.527      395,801
-    1024    2.5647   2.4395   3.1053     2.505      399,270
+       1    0.0081   0.0078   0.0112     8.074      123,853
+       8    0.0468   0.0467   0.0551     5.852      170,876
+      32    0.1490   0.1447   0.1808     4.657      214,735
+      64    0.1778   0.1744   0.2251     2.778      359,993
+     128    0.3226   0.3070   0.4072     2.520      396,763
+     512    1.2703   1.1990   1.5730     2.481      403,058
+    1024    2.5516   2.4208   3.0677     2.492      401,322
 
-  single-flow latency    : 11.1 us (p99 19.7 us)
-  peak throughput        : 399,270 flows/s (batch 1024)
+  single-flow latency    : 8.1 us (p99 11.2 us)
+  peak throughput        : 403,058 flows/s (batch 512)
 
 ====================================================================
   3. NATIVE C MODEL (MCU PATH)
 ====================================================================
-  C ids_predict latency  : 1111.2 ns/flow (1.111 us)
-  C throughput           : 899,964 flows/s (single thread)
+  C ids_predict latency  : 1135.8 ns/flow (1.136 us)
+  C throughput           : 880,460 flows/s (single thread)
   runtime deps           : none (pure C99, ~130 B stack)
 
 ====================================================================
   4. FEATURE EXTRACTION THROUGHPUT
 ====================================================================
   pcap                   : demo_mixed.pcap (17,850 packets -> 4,674 flows)
-  parse+read             : 10.2 ms (1,746,625 packets/s)
-  parse+aggregate        : 85.6 ms (208,465 packets/s, 54,586 flows/s)
+  parse+read             : 7.8 ms (2,274,996 packets/s)
+  parse+aggregate        : 82.8 ms (215,601 packets/s, 56,455 flows/s)
 
 ====================================================================
   5. END-TO-END (pcap -> verdicts)
 ====================================================================
-  4,674 flows classified in 91.1 ms (51,321 flows/s end-to-end)
+  4,674 flows classified in 89.5 ms (52,249 flows/s end-to-end)
   detected 4,573 attack flows / 101 benign
 
 ====================================================================
@@ -84,18 +84,16 @@ python=3.10.14  time=2026-08-22 14:18
 ====================================================================
   7. MEMORY FOOTPRINT
 ====================================================================
-  daemon runtime RSS     : 56.6 MB (onnxruntime + numpy only, clean process)
-  benchmark process RSS  : 317.4 MB (harness — imports pandas/xgboost; NOT the daemon)
+  daemon runtime RSS     : 55.1 MB (onnxruntime + numpy only, clean process)
+  benchmark process RSS  : 306.1 MB (harness — imports pandas/xgboost; NOT the daemon)
   edge runtime deps      : onnxruntime + numpy (+ scapy for live sniff)
   MCU C model RAM        : ~130 bytes stack, 0 heap
 
 ====================================================================
-  8. UNVALIDATED RASPBERRY PI 4 PROJECTION (host x 12)
+  8. TARGET-HARDWARE ACCEPTANCE GATE
 ====================================================================
-  host                   : Apple M4 (arm64)
-  ONNX single-flow (Pi)  : ~133.0 us/flow (~7,521 flows/s)
-  C model (Pi)           : ~13.33 us/flow (~74,997 flows/s)
-  feature extraction (Pi): ~17,372 packets/s (the real bottleneck on a live link)
-  status                 : estimate only — PI_FACTOR is not a measurement.
-  acceptance gate        : run this benchmark on the target Pi and publish the raw output before making a real-time throughput claim.
+  measured host          : macOS-26.6.1-arm64-arm-64bit
+  Raspberry Pi result    : NOT MEASURED
+  projection             : intentionally omitted; host scaling is not evidence
+  acceptance gate        : run this benchmark on the target Pi and retain the identity, hashes, raw output and soak record in deploy/PI_ACCEPTANCE.md
 ```

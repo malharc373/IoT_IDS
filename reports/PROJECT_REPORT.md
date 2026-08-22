@@ -46,7 +46,7 @@ Every result is therefore labelled by evidence scope.
 
 | Evidence class | What is currently supported | What it does not prove |
 |---|---|---|
-| Hermetic tests | 58 tests cover parsing, flow state, model loading, IPS, dashboard, data handling, and regressions | Accuracy on real networks |
+| Hermetic tests | 61 tests cover parsing, flow state, model loading, IPS, dashboard, data handling, governance, and regressions | Accuracy on real networks |
 | Synthetic held-out scenarios | 70 scenarios held out from training; ONNX and C parity checked | Generalisation beyond the traffic generators |
 | Host benchmarks | ONNX, C, extraction, end-to-end, and memory measurements on Apple Silicon | Raspberry Pi throughput or soak stability |
 | Cross-dataset study | Corrected code and evaluation protocol | Current exact metrics until datasets are remounted and rerun |
@@ -214,21 +214,21 @@ pin wheel hashes.
 
 ## 9. Performance status
 
-The latest host benchmark measured 11.1 microseconds mean single-flow ONNX
+The publication's audited 14:18 host snapshot measured 11.1 microseconds mean single-flow ONNX
 latency, 399,270 flows/s at batch 1024, 1.111 microseconds per flow for the
 native C model, 208,465 packets/s for parse plus aggregation, 51,321 flows/s
 end-to-end on the demo pcap, and 56.6 MB daemon RSS. These are Apple Silicon
 measurements and are not Raspberry Pi results.
 
-The benchmark still prints a clearly marked host-times-12 Pi projection for
-planning. It is not an acceptance result. The target gate is to run the same
-benchmark on a 64-bit Pi, preserve raw output, exercise realistic packet sizes
-and rates, and complete a soak run while watching dropped packets, memory,
-temperature, and incident latency.
+Numerical host-to-Pi projection has since been removed: scaling a laptop result
+is not target evidence. The target gate is to run the same benchmark on a
+64-bit Pi whose device tree proves its identity, preserve raw output, exercise
+realistic packet sizes and rates, and complete the 24-hour passive soak in
+`deploy/PI_ACCEPTANCE.md` while watching drops, memory and temperature.
 
 ## 10. Verification and reproducibility
 
-The hermetic suite currently contains 58 tests. It covers model loading,
+The hermetic suite currently contains 61 tests. It covers model loading,
 feature parity, packet formats, fragments, flow lifecycle, thread safety,
 bounded caches, dashboard authentication, log rotation, IPS rule generation,
 state refresh, safe dataset extraction, corrected research splits, cache
@@ -268,8 +268,9 @@ be archived together for the next academic result set.
 - Midstream flow direction is necessarily heuristic without a handshake.
 - Unsupported capture link types fail safely but are not yet decoded.
 - Python lock versions are exact, but wheel hashes remain unpinned.
-- Public-repository governance, license, data cards, model cards, branch
-  protection, and automated security settings require completion.
+- Security policy, data/model cards, Dependabot, private reporting, pinned
+  Actions and protected `main` are in place; the owner has not selected a
+  license, so default copyright restrictions remain.
 - Historical large binary objects remain in Git history; removing them would
   require a coordinated destructive rewrite.
 
@@ -281,7 +282,7 @@ be archived together for the next academic result set.
 | P0 | Capture real labelled traffic through the live 22-feature extractor | Grouped device/scenario/time split and per-class error analysis |
 | P1 | Benchmark and soak on Raspberry Pi | Raw benchmark, packet-drop counters, temperature, RSS, incident latency |
 | P1 | Decide how the research and live feature spaces should converge | Written ADR plus validated adapter or continued separation |
-| P1 | Add license, model card, data cards, security policy, and protected-branch controls | Repository files and verified GitHub settings |
+| P1 | Owner selects a license compatible with code, report, model, and third-party assets | Explicit license file and compatibility review |
 | P2 | Add supported Linux cooked and radiotap capture decoders | Format fixtures and parser parity tests |
 | P2 | Evaluate drift, adversarial traffic, calibration, and abstention | Pre-registered protocol and independent holdout |
 

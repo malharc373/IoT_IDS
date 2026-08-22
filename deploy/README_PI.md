@@ -306,6 +306,9 @@ tree/node counts fall back to the C header if xgboost isn't installed; the only
 section that needs extra libs is the latency chart (matplotlib), which is skipped
 cleanly if absent.
 
+Follow [`PI_ACCEPTANCE.md`](PI_ACCEPTANCE.md) for hardware identity, raw-output
+retention, and the 24-hour passive soak needed before publishing Pi claims.
+
 ## Troubleshooting
 
 | Symptom | Fix |

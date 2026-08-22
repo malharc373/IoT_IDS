@@ -128,7 +128,7 @@ ruff check .            All checks passed
 ```
 
 New ONNX SHA-256:
-`4b5e7a9a168bc7cde0d01803e5bc18ea27ae029f4c76ae6946dbcd62746fff05`.
+`0a62b0e5c7ad98c8172a0032bd0e6b55e6fb2208defeee2cc773b21b1f2d1336`.
 
 > [!caution] The perfect validation number is still evidence about the
 > synthetic generator, not real-network generalisation. R21 remains open. Also,

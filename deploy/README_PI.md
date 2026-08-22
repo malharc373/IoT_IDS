@@ -1,8 +1,10 @@
 # Deploying the IoT-IDS sensor on a Raspberry Pi
 
 End-to-end walkthrough: flash → connect → copy → install → run → demonstrate.
-Tested target: **Raspberry Pi 4 (64-bit Raspberry Pi OS)**. A Pi 3B+/Zero 2 W
-also works (inference is ~microseconds; the sniffer is the only real load).
+Target: **Raspberry Pi 4 with 64-bit Raspberry Pi OS and glibc 2.28+**. The
+dependency lock has CPython 3.10 aarch64 wheels available for its native
+packages. Actual Pi throughput and soak evidence is still pending; host
+inference timings are not a substitute for that acceptance run.
 
 The edge model (`models/live_ids.onnx`, ~96 KB) takes raw flow features — trees
 are scale-invariant, so there is no scaler to ship or drift — and the Pi needs
@@ -67,6 +69,8 @@ This installs deps into `.venv`, smoke-tests the model, and registers two
 systemd services: **`iot-ids`** (the sensor, runs as root) and
 **`iot-ids-dashboard`** (the web UI, runs as your user). Pass a second argument
 to change the dashboard port: `sudo bash deploy/setup_pi.sh eth0 8080`.
+The installer consumes the exact transitive `deploy/requirements-pi.txt` lock;
+its reviewed direct inputs are kept in `deploy/requirements-pi.in`.
 
 ## 5. Run the sensor
 

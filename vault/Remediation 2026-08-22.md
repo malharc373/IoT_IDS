@@ -54,7 +54,7 @@ records the test evidence and commit that closed it.
 | R15 | P1 | Report threshold-transfer selection bias at small budgets | verified | unconditional-repeat regression |
 | R16 | P0 | Resolve 12-feature research vs 22-feature runtime disconnect | verified | explicit separation + runtime contract guard |
 | R17 | P1 | Secure dataset downloads (TLS, checksums, safe extraction) | verified | archive security regression + full suite |
-| R18 | P1 | Declare complete/reproducible dependencies and lock strategy | open | pending |
+| R18 | P1 | Declare complete/reproducible dependencies and lock strategy | verified | fresh-venv suite + lock freshness |
 | R19 | P1 | Replace stale report and presentation with editable sources | open | pending |
 | R20 | P1 | Reconcile README, vault, daemon, model-card claims | open | pending |
 | R21 | P2 | Add real labelled-traffic and group-split experiments | blocked externally | dataset/hardware |
@@ -264,6 +264,45 @@ Evidence:
 pytest tests/ -q  -> 58 passed
 ruff check .      -> All checks passed
 git diff --check  -> clean
+```
+
+### 2026-08-22 — R18 dependency contracts and locks
+
+Three environments now have reviewed direct inputs and exact transitive Python
+3.10 locks:
+
+| Environment | Reviewed inputs | Install lock |
+|---|---|---|
+| Research/training/demo | `requirements.in` | `requirements.txt` |
+| Tests and lint | `requirements-dev.in` | `requirements-dev.txt` |
+| Pi sensor runtime | `deploy/requirements-pi.in` | `deploy/requirements-pi.txt` |
+
+The audit added two undeclared direct dependencies: `pyarrow` for Parquet
+datasets and `psutil` for benchmark memory measurements. `lightgbm`, `seaborn`,
+`skl2onnx` and `joblib` are no longer declared as direct dependencies because
+project code does not use them; packages still needed transitively remain in
+the generated lock. CI installs the development lock and recompiles all locks,
+then fails if an input and generated file disagree.
+
+The native Pi requirements were independently resolved against CPython 3.10
+aarch64 wheel tags: NumPy 2.2.6 is published for manylinux2014 and ONNX Runtime
+1.23.2 for manylinux 2.27/2.28. The deployment target now says glibc 2.28+ and
+does not claim unmeasured Pi performance.
+
+The locks pin versions but not wheel hashes. Full multi-platform hash generation
+was attempted and stopped after the ML wheel hash scan did not complete in a
+reasonable bounded run; this residual artifact-substitution risk is explicit
+rather than hidden. R17's dataset checksum gate is independent of Python package
+locking.
+
+Evidence:
+
+```text
+fresh Python 3.10 venv install  -> requirements-dev.txt installed successfully
+fresh-venv pytest tests/ -q     -> 58 passed in 38.58s
+fresh-venv ruff check .         -> All checks passed
+CPython 3.10 aarch64 wheels     -> NumPy and ONNX Runtime downloaded successfully
+pip-compile lock refresh        -> no generated diff
 ```
 
 ## External blockers and boundaries

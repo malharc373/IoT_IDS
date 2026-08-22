@@ -9,7 +9,8 @@ benchmarks, or withdrawn cross-dataset results as deployment evidence.
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements-dev.txt  # macOS/default
+# Ubuntu x86_64: requirements-dev-linux-x86_64.txt
 ruff check .
 pytest tests/ -q
 ```

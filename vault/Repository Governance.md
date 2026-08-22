@@ -22,7 +22,7 @@ Durable record of governance controls and decisions for
 - Dependabot checks Python and GitHub Actions monthly.
 - CI runs once per pull request, on direct `main` pushes, manually, and weekly.
   Workflow permissions are read-only and every action is pinned to a full
-  commit SHA.
+  commit SHA. macOS and Ubuntu x86_64 locks are regenerated on matching runners.
 
 ## GitHub settings applied 2026-08-22
 

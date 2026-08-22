@@ -1,5 +1,5 @@
 # Minimal edge runtime. Compile on dependency review:
-#   pip-compile --generate-hashes --output-file=deploy/requirements-pi.txt deploy/requirements-pi.in
+#   pip-compile --strip-extras --output-file=deploy/requirements-pi.txt deploy/requirements-pi.in
 numpy>=1.24,<3
 onnxruntime>=1.17,<2
 scapy>=2.5,<3

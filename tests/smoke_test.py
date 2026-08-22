@@ -1489,7 +1489,10 @@ def t_current_claims_are_evidence_scoped():
 def t_repository_governance_contract():
     """Security/data/model policy and minimum-permission CI remain present."""
     for rel in ["SECURITY.md", "CONTRIBUTING.md", "docs/DATA_CARD.md",
-                "models/README.md", ".github/dependabot.yml"]:
+                "models/README.md", ".github/dependabot.yml",
+                "requirements-linux-x86_64.in", "requirements-linux-x86_64.txt",
+                "requirements-dev-linux-x86_64.in",
+                "requirements-dev-linux-x86_64.txt"]:
         path = os.path.join(ROOT, rel)
         assert os.path.isfile(path) and os.path.getsize(path) > 100, rel
 
@@ -1498,6 +1501,8 @@ def t_repository_governance_contract():
     assert "permissions:\n  contents: read" in workflow
     assert "branches: [main, \"fix/**\", \"feat/**\"]" not in workflow
     assert "pull_request:" in workflow and "schedule:" in workflow
+    assert "runs-on: macos-15" in workflow
+    assert "requirements-dev-linux-x86_64.txt" in workflow
     uses = [line.split("uses:", 1)[1].strip().split()[0]
             for line in workflow.splitlines() if "uses:" in line]
     assert uses

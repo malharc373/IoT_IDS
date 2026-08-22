@@ -277,6 +277,14 @@ Three environments now have reviewed direct inputs and exact transitive Python
 | Tests and lint | `requirements-dev.in` | `requirements-dev.txt` |
 | Pi sensor runtime | `deploy/requirements-pi.in` | `deploy/requirements-pi.txt` |
 
+The first GitHub run after the full remediation exposed a platform condition
+that local macOS regeneration could not see: XGBoost depends on NCCL only on
+Linux/x86_64. The project now also generates
+`requirements-linux-x86_64.txt` and `requirements-dev-linux-x86_64.txt` from
+reviewed inputs. Ubuntu installs and freshness-checks those locks; a separate
+macOS job freshness-checks the default locks. This avoids both unpinned Linux
+transitives and impossible CUDA installation on macOS.
+
 The audit added `pyarrow` for Parquet datasets, `psutil` for benchmark memory
 measurements, and `reportlab` for the editable report renderer. `lightgbm`, `seaborn`,
 `skl2onnx` and `joblib` are no longer declared as direct dependencies because

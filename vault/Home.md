@@ -65,7 +65,7 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 ## Experiments
 
 - [[EXP01 - Cross-dataset study baseline]] — the numbers as they stood pre-fix
-- [[EXP02 - Corrected alignment rerun]] — the definitive 11-dataset result
+- [[EXP02 - Corrected alignment rerun]] — protocol corrected; exact rerun pending
 - [[EXP03 - Threshold transfer]] — historical conditional-sampling run; unconditional rerun pending
 
 ## Reference
@@ -75,10 +75,17 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 - [[Architecture]] — module map and data flow
 - [[Future Work]] — prioritized roadmap out of the review
 
+## Current publication artifacts
+
+- Editable source: `reports/PROJECT_REPORT.md`
+- Corrected PDF: `output/pdf/IOT_IDS_Corrected_Technical_Report.pdf`
+- Editable deck: `output/presentation/IOT_IDS_Corrected_Project_Review.pptx`
+- Superseded April artifacts: `legacy/stale-publication-artifacts/`
+
 ## Current state
 
 - 23 findings: 22 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
-- Test suite **45 passed / 0 failed** (was 23/1 before the first review), plus
+- Test suite **58 passed / 0 failed** (was 23/1 before the first review), plus
   `ruff` in CI and a benchmark that exits non-zero on a failed section
 - Prior off-domain run: ROC-AUC 0.509 over 110 dataset pairs, now historical.
   Its diagonal was resubstitution, so no current gap is quoted pending the

@@ -55,7 +55,7 @@ records the test evidence and commit that closed it.
 | R16 | P0 | Resolve 12-feature research vs 22-feature runtime disconnect | verified | explicit separation + runtime contract guard |
 | R17 | P1 | Secure dataset downloads (TLS, checksums, safe extraction) | verified | archive security regression + full suite |
 | R18 | P1 | Declare complete/reproducible dependencies and lock strategy | verified | fresh-venv suite + lock freshness |
-| R19 | P1 | Replace stale report and presentation with editable sources | open | pending |
+| R19 | P1 | Replace stale report and presentation with editable sources | verified | PDF/PPTX render QA + editable sources |
 | R20 | P1 | Reconcile README, vault, daemon, model-card claims | open | pending |
 | R21 | P2 | Add real labelled-traffic and group-split experiments | blocked externally | dataset/hardware |
 | R22 | P2 | Run actual Raspberry Pi performance/soak measurements | blocked externally | Pi required |
@@ -277,8 +277,8 @@ Three environments now have reviewed direct inputs and exact transitive Python
 | Tests and lint | `requirements-dev.in` | `requirements-dev.txt` |
 | Pi sensor runtime | `deploy/requirements-pi.in` | `deploy/requirements-pi.txt` |
 
-The audit added two undeclared direct dependencies: `pyarrow` for Parquet
-datasets and `psutil` for benchmark memory measurements. `lightgbm`, `seaborn`,
+The audit added `pyarrow` for Parquet datasets, `psutil` for benchmark memory
+measurements, and `reportlab` for the editable report renderer. `lightgbm`, `seaborn`,
 `skl2onnx` and `joblib` are no longer declared as direct dependencies because
 project code does not use them; packages still needed transitively remain in
 the generated lock. CI installs the development lock and recompiles all locks,
@@ -303,6 +303,40 @@ fresh-venv pytest tests/ -q     -> 58 passed in 38.58s
 fresh-venv ruff check .         -> All checks passed
 CPython 3.10 aarch64 wheels     -> NumPy and ONNX Runtime downloaded successfully
 pip-compile lock refresh        -> no generated diff
+```
+
+### 2026-08-22 — R19 stale publications replaced
+
+The April 2026 39-page report and ten-page image-only presentation repeated
+withdrawn cross-dataset metrics, joined the incompatible 12-feature research
+and 22-feature runtime stories, and converted a host slowdown estimate into a
+Raspberry Pi feasibility conclusion. They were moved intact to
+`legacy/stale-publication-artifacts/` with a supersession notice.
+
+The current replacements are:
+
+- `reports/PROJECT_REPORT.md`: editable source for a six-page corrected
+  technical report;
+- `reports/build_report.py`: deterministic ReportLab renderer;
+- `output/pdf/IOT_IDS_Corrected_Technical_Report.pdf`: visually verified PDF;
+- `output/presentation/IOT_IDS_Corrected_Project_Review.pptx`: editable
+  eleven-slide deck with repository sources embedded in speaker notes.
+
+Both artifacts separate implemented capability from evidence scope. They show
+the two-prototype boundary, corrected evaluation protocol, synthetic-only live
+model evidence, host-only benchmark, unavailable dataset/Pi blockers, and the
+next three acceptance gates. No withdrawn exact SFAF metric was reintroduced.
+
+Visual verification:
+
+```text
+PDF                       -> 6 A4 pages rendered and inspected; no clipping
+PPTX                      -> 11 slides rendered and inspected at full size
+slides_test.py            -> no overflow detected
+manual corrections       -> title/rule collisions, label wraps, chart ticks fixed
+fresh-venv suite         -> 58 passed in 13.74s; Ruff clean
+PDF SHA-256              -> 9c2a8f24bb0b47d9faff644579f43e2e856f52f8b6ecbd8797406f47bf007c55
+PPTX SHA-256             -> cc49b2d9e99b7b89e4f7f90a8b914de22680dbbad230c4499e8ac2d238daf91e
 ```
 
 ## External blockers and boundaries

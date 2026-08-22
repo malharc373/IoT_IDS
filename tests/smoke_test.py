@@ -60,7 +60,7 @@ def t_imports():
 
 def t_requirements_importable():
     import numpy, pandas, sklearn, xgboost, pyarrow, psutil  # noqa
-    import onnxruntime, onnxmltools, scapy, matplotlib  # noqa
+    import onnxruntime, onnxmltools, scapy, matplotlib, reportlab  # noqa
 
 
 # ── 2. flow_features ──────────────────────────────────────────────────────────

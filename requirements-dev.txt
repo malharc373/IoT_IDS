@@ -6,6 +6,10 @@
 #
 build==1.5.0
     # via pip-tools
+charset-normalizer==3.5.1
+    # via
+    #   -r requirements.txt
+    #   reportlab
 click==8.4.2
     # via pip-tools
 coloredlogs==15.0.1
@@ -90,6 +94,7 @@ pillow==12.3.0
     # via
     #   -r requirements.txt
     #   matplotlib
+    #   reportlab
 pip-tools==7.6.1
     # via -r requirements-dev.in
 pluggy==1.6.0
@@ -125,6 +130,8 @@ pytz==2026.3.post1
     # via
     #   -r requirements.txt
     #   pandas
+reportlab==4.5.1
+    # via -r requirements.txt
 ruff==0.16.4
     # via -r requirements-dev.in
 scapy==2.7.0

@@ -1311,6 +1311,57 @@ def t_download_datasets_dangling_symlink():
     assert "not mounted" in out and "IOTIDS_DATASETS_ROOT" in out, out
 
 
+def t_dataset_archives_extract_safely():
+    """Archive traversal, links and checksum mismatches fail closed."""
+    import importlib.util, io, tarfile, zipfile, hashlib
+    spec = importlib.util.spec_from_file_location(
+        "down_safe", os.path.join(ROOT, "code", "download_datasets.py"))
+    dl = importlib.util.module_from_spec(spec); spec.loader.exec_module(dl)
+    dest = os.path.join(TMP, "extract")
+    os.makedirs(dest, exist_ok=True)
+
+    evil_tar = os.path.join(TMP, "evil.tar.gz")
+    with tarfile.open(evil_tar, "w:gz") as tf:
+        info = tarfile.TarInfo("../tar-escape")
+        payload = b"owned"
+        info.size = len(payload)
+        tf.addfile(info, io.BytesIO(payload))
+    try:
+        dl._safe_extract_tar(evil_tar, dest)
+        raise AssertionError("tar traversal was extracted")
+    except ValueError as e:
+        assert "escapes destination" in str(e)
+    assert not os.path.exists(os.path.join(TMP, "tar-escape"))
+
+    evil_zip = os.path.join(TMP, "evil.zip")
+    with zipfile.ZipFile(evil_zip, "w") as zf:
+        zf.writestr("../zip-escape", "owned")
+    try:
+        dl._safe_extract_zip(evil_zip, dest)
+        raise AssertionError("zip traversal was extracted")
+    except ValueError as e:
+        assert "escapes destination" in str(e)
+    assert not os.path.exists(os.path.join(TMP, "zip-escape"))
+
+    good_zip = os.path.join(TMP, "good.zip")
+    with zipfile.ZipFile(good_zip, "w") as zf:
+        zf.writestr("nested/data.csv", "a,b\n1,2\n")
+    dl._safe_extract_zip(good_zip, dest)
+    assert os.path.exists(os.path.join(dest, "nested", "data.csv"))
+
+    digest = hashlib.sha256(open(good_zip, "rb").read()).hexdigest()
+    assert not dl._checksum_allows_extract(good_zip, None)
+    assert dl._checksum_allows_extract(good_zip, digest)
+    try:
+        dl._checksum_allows_extract(good_zip, "0" * 64)
+        raise AssertionError("checksum mismatch was accepted")
+    except ValueError as e:
+        assert "checksum mismatch" in str(e)
+
+    source = open(os.path.join(ROOT, "code", "download_datasets.py")).read()
+    assert "--no-check-certificate" not in source
+
+
 # ── 8. shell scripts syntax ───────────────────────────────────────────────────
 def t_shell_syntax():
     for sh in ["demo/run_demo.sh", "deploy/setup_pi.sh"]:
@@ -1459,6 +1510,7 @@ TESTS = [
         ("SFAF onnx export", t_sfaf_onnx_export),
         ("download_datasets runs", t_download_datasets_runs),
         ("download datasets dangling symlink", t_download_datasets_dangling_symlink),
+        ("dataset archives extract safely", t_dataset_archives_extract_safely),
         ("flow table prune bounds memory", t_flow_table_prune_bounds_memory),
         ("flow reuse distinct records", t_flow_reuse_still_generates_distinct_records),
         ("shell script syntax", t_shell_syntax),

@@ -19,13 +19,23 @@ Kaggle setup (one-time):
     # create a token at https://www.kaggle.com/settings -> "Create New Token"
     mkdir -p ~/.kaggle && mv ~/Downloads/kaggle.json ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json
     python code/download_datasets.py
+
+Direct-source archives retain TLS verification, print their SHA-256, and are
+not extracted without either a trusted ``--sha256 SUBDIR=HEX`` value or an
+explicit ``--allow-unverified`` risk acknowledgement. All archives are checked
+for path traversal, links, and special files before extraction.
 """
 from __future__ import annotations
 
 import os
 import sys
 import glob
+import stat
+import hashlib
 import subprocess
+import tarfile
+import zipfile
+from urllib.parse import urlparse
 
 BASE = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DS = os.environ.get("IOTIDS_DATASETS_ROOT") or os.path.join(BASE, "Datasets")
@@ -78,13 +88,12 @@ KAGGLE_SOURCES = [
 ]
 
 # Datasets with an auth-free direct URL (no Kaggle token needed).
-# (url, subdir, note, extra_wget_flags)
+# (url, subdir, note, publisher_sha256_or_none)
 DIRECT_SOURCES = [
     ("https://mcfp.felk.cvut.cz/publicDatasets/IoT-23-Dataset/iot_23_datasets_small.tar.gz",
-     "IoT23", "IoT-23 — real IoT malware Zeek conn logs (~8.8GB, slow host)", ""),
+     "IoT23", "IoT-23 — real IoT malware Zeek conn logs (~8.8GB, slow host)", None),
     ("https://www.cse.wustl.edu/~jain/iiot2/ftp/wustl_iiot_2021.zip",
-     "WUSTL_IIoT_2021", "WUSTL-IIoT-2021 — industrial control CSV",
-     "--no-check-certificate"),
+     "WUSTL_IIoT_2021", "WUSTL-IIoT-2021 — industrial control CSV", None),
 ]
 
 # Already-present but different modality (NOT in the 12-feature flow space):
@@ -151,47 +160,115 @@ def kaggle_fetch():
         print(f"\n[kaggle] {slug} -> {dest}\n         {note}")
         rc = subprocess.call([
             "kaggle", "datasets", "download",
-            "-d", slug, "-p", dest, "--unzip",
+            "-d", slug, "-p", dest,
         ])
         if rc != 0:
             print(f"[warn] kaggle download failed for {slug} (rc={rc})")
+        else:
+            _extract_archives(dest)
 
 
-def direct_fetch():
+def _sha256(path, chunk_size=1 << 20):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _safe_target(dest, member_name):
+    """Resolve an archive member and reject absolute/traversal destinations."""
+    if not member_name or os.path.isabs(member_name):
+        raise ValueError(f"unsafe absolute/empty archive member: {member_name!r}")
+    root = os.path.realpath(dest)
+    target = os.path.realpath(os.path.join(root, member_name))
+    if os.path.commonpath([root, target]) != root:
+        raise ValueError(f"archive member escapes destination: {member_name!r}")
+    return target
+
+
+def _safe_extract_tar(path, dest):
+    with tarfile.open(path) as tf:
+        members = tf.getmembers()
+        for member in members:
+            _safe_target(dest, member.name)
+            if member.issym() or member.islnk():
+                raise ValueError(f"archive links are not allowed: {member.name!r}")
+            if not (member.isfile() or member.isdir()):
+                raise ValueError(f"archive special file is not allowed: {member.name!r}")
+        tf.extractall(dest, members=members)
+
+
+def _safe_extract_zip(path, dest):
+    with zipfile.ZipFile(path) as zf:
+        members = zf.infolist()
+        for member in members:
+            _safe_target(dest, member.filename)
+            mode = member.external_attr >> 16
+            file_type = stat.S_IFMT(mode)
+            if file_type == stat.S_IFLNK:
+                raise ValueError(f"archive links are not allowed: {member.filename!r}")
+            if file_type not in (0, stat.S_IFREG, stat.S_IFDIR):
+                raise ValueError(f"archive special file is not allowed: {member.filename!r}")
+        zf.extractall(dest, members=members)
+
+
+def _checksum_allows_extract(path, expected, allow_unverified=False):
+    actual = _sha256(path)
+    print(f"  SHA-256 {os.path.basename(path)}: {actual}")
+    if expected:
+        if actual.lower() != expected.lower():
+            raise ValueError(
+                f"checksum mismatch for {os.path.basename(path)}: expected "
+                f"{expected.lower()}, got {actual.lower()}")
+        return True
+    if allow_unverified:
+        print("  [warn] publisher provides no pinned digest; extracting only because "
+              "--allow-unverified was explicitly supplied")
+        return True
+    print("  [warn] archive downloaded but NOT extracted: no trusted checksum. "
+          "Review the SHA-256 above, then rerun with --sha256 SUBDIR=HEX (preferred) "
+          "or --allow-unverified (explicit risk acceptance).")
+    return False
+
+
+def direct_fetch(checksums=None, allow_unverified=False):
     """Fetch datasets that have an auth-free direct URL (wget, resumable),
     then extract any downloaded archive so the loaders can see the files."""
-    for url, subdir, note, flags in DIRECT_SOURCES:
+    checksums = checksums or {}
+    for url, subdir, note, publisher_sha256 in DIRECT_SOURCES:
         dest = os.path.join(DS, subdir)
         os.makedirs(dest, exist_ok=True)
         print(f"\n[direct] {url}\n         {note}")
         cmd = ["wget", "-c", "--tries=20", "--timeout=60"]
-        if flags:
-            cmd += flags.split()
         cmd += ["-P", dest, url]
         rc = subprocess.call(cmd)
         if rc != 0:
             print(f"[warn] direct download failed for {subdir} (rc={rc}); "
                   f"the IoT-23 host is slow — the download is resumable, re-run.")
             continue
-        _extract_archives(dest)
+        archive = os.path.join(dest, os.path.basename(urlparse(url).path))
+        expected = checksums.get(subdir, publisher_sha256)
+        try:
+            if _checksum_allows_extract(archive, expected, allow_unverified):
+                _extract_archives(dest)
+        except ValueError as e:
+            print(f"[ERROR] refusing {subdir}: {e}")
 
 
 def _extract_archives(dest):
-    """Extract .tar.gz / .zip found in dest (idempotent-ish)."""
-    import tarfile, zipfile
+    """Safely extract .tar.gz / .zip found in dest (idempotent-ish)."""
     for arc in glob.glob(os.path.join(dest, "*.tar.gz")) + \
                glob.glob(os.path.join(dest, "*.tgz")):
         try:
             print(f"  extracting {os.path.basename(arc)} ...")
-            with tarfile.open(arc) as tf:
-                tf.extractall(dest)
+            _safe_extract_tar(arc, dest)
         except Exception as e:
             print(f"  [warn] extract failed: {e}")
     for arc in glob.glob(os.path.join(dest, "*.zip")):
         try:
             print(f"  extracting {os.path.basename(arc)} ...")
-            with zipfile.ZipFile(arc) as zf:
-                zf.extractall(dest)
+            _safe_extract_zip(arc, dest)
         except Exception as e:
             print(f"  [warn] extract failed: {e}")
 
@@ -201,11 +278,26 @@ def main():
     ap = argparse.ArgumentParser(description="Fetch IDS datasets for SFAF")
     ap.add_argument("--direct", action="store_true",
                     help="also fetch auth-free direct-URL datasets (IoT-23, WUSTL)")
+    ap.add_argument("--sha256", action="append", default=[], metavar="SUBDIR=HEX",
+                    help="trusted SHA-256 for a direct archive; repeat per source")
+    ap.add_argument("--allow-unverified", action="store_true",
+                    help="extract a direct archive without a trusted digest "
+                         "(explicit supply-chain risk acceptance)")
     ap.add_argument("--check-only", action="store_true",
                     help="report which datasets are present and exit without "
                          "downloading anything (used by the test suite, and by "
                          "anyone who just wants to know what is missing)")
     args = ap.parse_args()
+
+    checksums = {}
+    for item in args.sha256:
+        try:
+            name, digest = item.split("=", 1)
+        except ValueError:
+            ap.error("--sha256 must be SUBDIR=HEX")
+        if len(digest) != 64 or any(c not in "0123456789abcdefABCDEF" for c in digest):
+            ap.error(f"invalid SHA-256 for {name!r}")
+        checksums[name] = digest.lower()
 
     ensure_dataset_root()
     print("Checking dataset layout under Datasets/ ...")
@@ -223,7 +315,7 @@ def main():
         print("\nNo Kaggle token configured.")
         print(MANUAL)
     if args.direct:
-        direct_fetch()
+        direct_fetch(checksums=checksums, allow_unverified=args.allow_unverified)
     print("\nRe-checking core layout:")
     if check_layout():
         print("\nReady. Run: python code/02_train_sfaf.py")

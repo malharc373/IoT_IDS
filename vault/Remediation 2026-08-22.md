@@ -53,7 +53,7 @@ records the test evidence and commit that closed it.
 | R14 | P1 | Version IoT-23 preprocessing caches | verified | loader-digest cache regression |
 | R15 | P1 | Report threshold-transfer selection bias at small budgets | verified | unconditional-repeat regression |
 | R16 | P0 | Resolve 12-feature research vs 22-feature runtime disconnect | verified | explicit separation + runtime contract guard |
-| R17 | P1 | Secure dataset downloads (TLS, checksums, safe extraction) | open | pending |
+| R17 | P1 | Secure dataset downloads (TLS, checksums, safe extraction) | verified | archive security regression + full suite |
 | R18 | P1 | Declare complete/reproducible dependencies and lock strategy | open | pending |
 | R19 | P1 | Replace stale report and presentation with editable sources | open | pending |
 | R20 | P1 | Reconcile README, vault, daemon, model-card claims | open | pending |
@@ -241,6 +241,29 @@ Evidence:
 ```text
 pytest tests/ -q  -> 57 passed in 14.42s
 ruff check .      -> All checks passed
+```
+
+### 2026-08-22 — R17 dataset download path hardened
+
+- Removed the WUSTL TLS-certificate bypass; direct downloads now use normal
+  certificate verification.
+- Kaggle no longer performs its own blind `--unzip`. Both Kaggle and direct
+  archives pass through the repository's checked extractor.
+- Tar and ZIP members are resolved against the destination before extraction.
+  Absolute paths, traversal, links and special files are rejected.
+- Every direct archive's SHA-256 is printed. Because the current publishers do
+  not provide pinned digests in this repository, extraction defaults to off.
+  It requires a digest obtained through a trusted channel via
+  `--sha256 SUBDIR=HEX`, or explicit risk acceptance via `--allow-unverified`.
+- Regressions exercise malicious tar/ZIP traversal, a valid nested archive,
+  digest match/mismatch and the no-digest fail-closed behavior.
+
+Evidence:
+
+```text
+pytest tests/ -q  -> 58 passed
+ruff check .      -> All checks passed
+git diff --check  -> clean
 ```
 
 ## External blockers and boundaries

@@ -181,8 +181,9 @@ numbers would be fabrication. The affected artifacts are quarantined under
 | Daemon memory | **56 MB** (onnxruntime + numpy) |
 | Model size | 90 KB ONNX / 42 KB C const |
 
-Real-time on a Pi 4 with headroom — sniffing/aggregation, not inference, is the
-limit. Full report: [`demo/results/BENCHMARK.md`](demo/results/BENCHMARK.md).
+The host benchmark is encouraging, but Raspberry Pi throughput remains an
+unvalidated projection until the hardware acceptance run is captured. Full
+report: [`demo/results/BENCHMARK.md`](demo/results/BENCHMARK.md).
 
 ### Reproducing the SFAF datasets
 
@@ -199,6 +200,13 @@ python code/threshold_transfer.py           # how cheap is target-domain calibra
 IoT-23 ships as `iot_23_datasets_small.tar.gz`; extract it under
 `Datasets/IoT23/` before use. Its sampled frame is cached beside the data, so
 only the first run pays the ~27 GB parse.
+
+Downloads use normal TLS verification and archives are extracted with path,
+link, and special-file checks. Direct-source archives are downloaded but not
+extracted unless a trusted digest is supplied, for example
+`--sha256 IoT23=<64-hex-digest>`, or the risk is explicitly accepted with
+`--allow-unverified`. The script prints the observed SHA-256 for independent
+verification. Kaggle archives are also routed through the safe extractor.
 
 ---
 

@@ -38,6 +38,7 @@ secrets.*
 # ── Datasets (too large; real dir or a symlink to an external drive) ──────────
 Datasets/
 /Datasets
+/Literature/*.pdf
 data/pcaps/
 data/processed/
 results/full_dataset.pkl

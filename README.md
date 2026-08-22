@@ -124,7 +124,9 @@ environment with ReportLab) using `python reports/build_report.py`.
 
 No open-source license has been selected yet. The absence of a license means no
 permission to copy, modify, or redistribute is granted; the owner must make an
-explicit license decision before outside contributions or reuse.
+explicit license decision before outside contributions or reuse. The scoped
+recommendation and rightsholder checklist are in
+[`docs/LICENSE_DECISION.md`](docs/LICENSE_DECISION.md).
 
 ## Configuration
 

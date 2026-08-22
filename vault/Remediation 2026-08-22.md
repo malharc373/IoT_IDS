@@ -60,7 +60,7 @@ records the test evidence and commit that closed it.
 | R21 | P2 | Add real labelled-traffic and group-split experiments | protocol ready; blocked externally | labelled pcap required |
 | R22 | P2 | Run actual Raspberry Pi performance/soak measurements | protocol ready; blocked externally | Pi required |
 | R23 | P1 | Add license, model/data cards, branch protection, security settings | partial; owner decision | controls verified; license choice pending |
-| R24 | P2 | Remove historical large binaries from Git history | decision required | coordinated rewrite |
+| R24 | P2 | Remove historical large binaries from Git history | plan ready; decision required | coordinated rewrite |
 
 ## Execution log
 
@@ -403,6 +403,35 @@ ruff check .                    -> All checks passed
 workflow + Dependabot YAML      -> parsed successfully
 GitHub protection/settings API  -> applied and read back
 ```
+
+The first pushed full run initially failed because the macOS-generated lock did
+not contain XGBoost's Linux/x86_64-only NCCL dependency. Commit `d07e4eb`
+separated default/macOS and Ubuntu x86_64 locks and upgraded pinned Actions to
+Node-24-compatible majors. GitHub run `32566402604` then passed both jobs:
+`macOS lock freshness` in 27 seconds and the Ubuntu `test` job—including lock
+regeneration, lint, 61 tests, artifact contracts, C compilation, demo and
+benchmark—in 4 minutes 38 seconds. Both checks are now required on `main`.
+
+GitGuardian remains red for incident `36364668`, which points only to the old
+credential-shaped documentation placeholder in commit `aeeb62c`; current code
+removed it and guards against recurrence. The incident needs an authenticated
+false-positive disposition. Rewriting the branch merely to satisfy the scanner
+would violate the separate R24 coordination boundary.
+
+### 2026-08-22 — licensing and history decisions made actionable
+
+The repository contained twelve third-party research PDFs without recorded
+redistribution grants. They are removed from the current Git index and ignored,
+while all twelve local files remain on this Mac. `Literature/README.md` preserves
+their SHA-256 manifest and directs users to the maintained bibliography.
+
+`docs/LICENSE_DECISION.md` scopes rightsholders and recommends Apache-2.0 for
+original software/model artifacts plus CC BY 4.0 for original academic works,
+subject to author consent. `docs/HISTORY_CLEANUP_PLAN.md` quantifies the 41.69
+MiB pack and the historical 56.4 MB / 32.6 MB / 13.1 MB pickle leaders, defines
+a narrow purge candidate, and requires a mirror backup, collaboration freeze,
+disposable rehearsal, explicit ref leases, fresh-clone CI, and artifact-hash
+verification. No history was rewritten.
 
 ### 2026-08-22 — R21/R22 external acceptance prepared
 

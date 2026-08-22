@@ -1490,6 +1490,8 @@ def t_repository_governance_contract():
     """Security/data/model policy and minimum-permission CI remain present."""
     for rel in ["SECURITY.md", "CONTRIBUTING.md", "docs/DATA_CARD.md",
                 "models/README.md", ".github/dependabot.yml",
+                "docs/LICENSE_DECISION.md", "docs/HISTORY_CLEANUP_PLAN.md",
+                "Literature/README.md",
                 "requirements-linux-x86_64.in", "requirements-linux-x86_64.txt",
                 "requirements-dev-linux-x86_64.in",
                 "requirements-dev-linux-x86_64.txt"]:
@@ -1509,6 +1511,11 @@ def t_repository_governance_contract():
     for action in uses:
         ref = action.rsplit("@", 1)[-1]
         assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref), action
+
+    tracked_lit = subprocess.run(
+        ["git", "ls-files", "Literature"], cwd=ROOT,
+        capture_output=True, text=True, check=True).stdout.splitlines()
+    assert not [p for p in tracked_lit if p.lower().endswith(".pdf")], tracked_lit
 
 
 def t_benchmark_extraction_section_runs():

@@ -171,7 +171,10 @@ def main():
     n_tr_scen = len(set(groups[tr_idx]))
     n_te_scen = len(set(groups[te_idx]))
     overlap = set(groups[tr_idx]) & set(groups[te_idx])
-    assert not overlap, f"scenario leaked across the split: {list(overlap)[:3]}"
+    if overlap:
+        raise ValueError(
+            f"scenario leaked across the split: {sorted(overlap, key=str)[:3]}"
+        )
     print(f"\nTrain: {len(X_tr):,} flows / {n_tr_scen} scenarios"
           f"   Test: {len(X_te):,} flows / {n_te_scen} scenarios")
     print("Split is by SCENARIO — the test set contains unseen attackers.")

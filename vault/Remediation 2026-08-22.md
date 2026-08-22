@@ -61,6 +61,8 @@ records the test evidence and commit that closed it.
 | R22 | P2 | Run actual Raspberry Pi performance/soak measurements | protocol ready; blocked externally | Pi required |
 | R23 | P1 | Add license, model/data cards, branch protection, security settings | partial; owner decision | controls verified; license choice pending |
 | R24 | P2 | Remove historical large binaries from Git history | plan ready; decision required | coordinated rewrite |
+| R25 | P1 | Independent security/dependency hardening pass | verified | 63 tests; audit tools; full local gates |
+| R26 | P1 | Enable GitHub CodeQL default setup | verified | Python analysis run `32567799399` passed |
 
 ## Execution log
 
@@ -475,9 +477,26 @@ PDF SHA-256                  -> a43c2dfd323a41be74602a430b185752323dfaa9d12d3f4e
   external research-dataset mount was unavailable during this audit.
 - Rewriting public Git history is destructive and affects collaborators. It is
   tracked, but will not be performed without a specific coordinated decision.
-- GitHub branch protection/security settings are remote mutations. They will be
-  applied only when credentials and repository permissions are available, and
-  recorded with the resulting state.
+- GitHub branch protection and core security settings were applied and read
+  back through authenticated API access. CodeQL validation and GitGuardian's
+  false-positive disposition are tracked separately above.
+
+### 2026-08-22 — R25 verified; R26 started
+
+A fresh pass did not rely on the existing remediation verdicts. It ran the
+complete hermetic suite, Ruff, bytecode compilation, shell syntax, dependency
+audits, Bandit, current GitHub checks, and repository-control readback. The two
+runtime locks have no known vulnerabilities. Finding [[F24 - Independent
+security hardening follow-up]] records the fixes: an optimization-proof split
+gate, atomic and observable IPS state persistence, member-wise atomic archive
+extraction, and stable executable resolution. The suite now has 63 checks.
+
+GitHub CodeQL default setup was enabled for Python using the default high-
+precision query suite. Validation run `32567799399` passed, and the resulting
+configuration reports weekly Python analysis. GitHub rejected
+including Actions as a language because it was not detected as eligible, and
+the repository API left the two preview secret-scanning options disabled; no
+unsupported state is claimed.
 
 ## Related
 

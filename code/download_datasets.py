@@ -32,8 +32,10 @@ import sys
 import glob
 import stat
 import hashlib
+import shutil
 import subprocess
 import tarfile
+import tempfile
 import zipfile
 from urllib.parse import urlparse
 
@@ -133,8 +135,7 @@ def have_kaggle():
         import kaggle  # noqa: F401
         return True
     except Exception:
-        return subprocess.call(["which", "kaggle"],
-                               stdout=subprocess.DEVNULL) == 0
+        return shutil.which("kaggle") is not None
 
 
 def check_layout():
@@ -154,12 +155,16 @@ def check_layout():
 def kaggle_fetch():
     # Sequential — Kaggle downloads stall when several run in parallel on the
     # same (esp. exFAT) volume, and hang on very large single-zip archives.
+    kaggle_bin = shutil.which("kaggle")
+    if not kaggle_bin:
+        print("[ERROR] Kaggle credentials exist, but the kaggle executable is unavailable.")
+        return
     for slug, subdir, note in KAGGLE_SOURCES:
         dest = os.path.join(DS, subdir)
         os.makedirs(dest, exist_ok=True)
         print(f"\n[kaggle] {slug} -> {dest}\n         {note}")
         rc = subprocess.call([
-            "kaggle", "datasets", "download",
+            kaggle_bin, "datasets", "download",
             "-d", slug, "-p", dest,
         ])
         if rc != 0:
@@ -196,7 +201,16 @@ def _safe_extract_tar(path, dest):
                 raise ValueError(f"archive links are not allowed: {member.name!r}")
             if not (member.isfile() or member.isdir()):
                 raise ValueError(f"archive special file is not allowed: {member.name!r}")
-        tf.extractall(dest, members=members)
+        for member in members:
+            target = _safe_target(dest, member.name)
+            if member.isdir():
+                os.makedirs(target, exist_ok=True)
+                continue
+            source = tf.extractfile(member)
+            if source is None:
+                raise ValueError(f"archive file has no payload: {member.name!r}")
+            with source:
+                _atomic_extract_file(source, target)
 
 
 def _safe_extract_zip(path, dest):
@@ -210,7 +224,36 @@ def _safe_extract_zip(path, dest):
                 raise ValueError(f"archive links are not allowed: {member.filename!r}")
             if file_type not in (0, stat.S_IFREG, stat.S_IFDIR):
                 raise ValueError(f"archive special file is not allowed: {member.filename!r}")
-        zf.extractall(dest, members=members)
+        for member in members:
+            target = _safe_target(dest, member.filename)
+            if member.is_dir():
+                os.makedirs(target, exist_ok=True)
+                continue
+            with zf.open(member) as source:
+                _atomic_extract_file(source, target)
+
+
+def _atomic_extract_file(source, target):
+    """Write an archive member without following a pre-existing file symlink."""
+    parent = os.path.dirname(target)
+    os.makedirs(parent, exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "wb", dir=parent, prefix=".iotids-extract-", delete=False
+        ) as out:
+            tmp_path = out.name
+            shutil.copyfileobj(source, out)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(tmp_path, target)
+    except Exception:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+        raise
 
 
 def _checksum_allows_extract(path, expected, allow_unverified=False):
@@ -236,11 +279,15 @@ def direct_fetch(checksums=None, allow_unverified=False):
     """Fetch datasets that have an auth-free direct URL (wget, resumable),
     then extract any downloaded archive so the loaders can see the files."""
     checksums = checksums or {}
+    wget_bin = shutil.which("wget")
+    if not wget_bin:
+        print("[ERROR] direct downloads require the wget executable.")
+        return
     for url, subdir, note, publisher_sha256 in DIRECT_SOURCES:
         dest = os.path.join(DS, subdir)
         os.makedirs(dest, exist_ok=True)
         print(f"\n[direct] {url}\n         {note}")
-        cmd = ["wget", "-c", "--tries=20", "--timeout=60"]
+        cmd = [wget_bin, "-c", "--tries=20", "--timeout=60"]
         cmd += ["-P", dest, url]
         rc = subprocess.call(cmd)
         if rc != 0:

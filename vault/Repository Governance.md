@@ -41,6 +41,13 @@ Read back through the GitHub API after mutation:
 | Linear history | required |
 | Conversation resolution | required |
 | Force pushes / branch deletion | disabled / disabled |
+| CodeQL default setup | enabled for weekly Python analysis; initial run passed |
+
+GitHub's two preview secret-scanning options (`validity_checks` and
+`non_provider_patterns`) were reported as disabled. An authenticated repository
+update returned success but did not change either state, so they are recorded
+as unavailable rather than falsely claimed as enabled. Existing provider
+scanning and push protection remain enabled.
 
 The repository description was changed from an unvalidated Raspberry Pi
 deployment claim to an evidence-scoped prototype description.
@@ -81,6 +88,12 @@ and a regression prevents recurrence. Because the app scans every commit in the
 PR, the check remains red until the authenticated incident owner marks this
 specific historical placeholder as false positive or the branch is rewritten.
 The latter is intentionally not used as a workaround for R24.
+
+The dashboard confirms five occurrences but zero files requiring a current code
+fix. All five are the same credential-shaped placeholder propagated through
+the implementation note and later removal commits. The prepared disposition is
+`This is not a secret (false positive)`; submitting it is an external incident
+state change and remains pending explicit action-time confirmation.
 
 ## Related
 

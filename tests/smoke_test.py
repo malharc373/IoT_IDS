@@ -588,6 +588,37 @@ def t_ips_refreshes_block_deadline():
     assert "timeout 60s" in ran[0][1]
 
 
+def t_ips_state_is_atomic_and_failures_are_visible():
+    """Responder state must not be truncated or fail without operator evidence."""
+    import json as _json
+    from unittest.mock import patch
+    from ips_response import Responder
+
+    messages = []
+    state = os.path.join(TMP, "atomic", "ips.json")
+    r = Responder(
+        mode="dry-run",
+        strikes=1,
+        state_path=state,
+        logger=messages.append,
+    )
+    r.active = {"203.0.113.8": {"until": time.time() + 60, "kind": "mirai"}}
+    assert r._save_state()
+    assert _json.load(open(state))["active"] == r.active
+    assert not [p for p in os.listdir(os.path.dirname(state)) if p.endswith(".tmp")]
+
+    with patch("ips_response.os.replace", side_effect=OSError("read-only filesystem")):
+        assert not r._save_state()
+    assert any("failed to persist state" in msg and state in msg for msg in messages)
+    assert _json.load(open(state))["active"] == r.active, "failed save damaged prior state"
+
+    corrupt = os.path.join(TMP, "atomic", "corrupt.json")
+    with open(corrupt, "w") as f:
+        f.write("not-json")
+    Responder(mode="dry-run", state_path=corrupt, logger=messages.append)
+    assert any("ignoring unreadable state file" in msg and corrupt in msg for msg in messages)
+
+
 def t_incident_watermarks_are_bounded():
     """A disappeared incident cannot suppress a smaller future incident."""
     from ids_daemon import IncidentWatermarks
@@ -1253,6 +1284,13 @@ def t_sfaf_trainer_guard():
     assert "download_datasets.py" in combined, "error does not point at the fix"
 
 
+def t_live_trainer_split_guard_survives_optimization():
+    """Scenario isolation is an evidence gate, so `python -O` cannot remove it."""
+    source = open(os.path.join(ROOT, "src", "train_live_model.py")).read()
+    assert "assert not overlap" not in source
+    assert "raise ValueError" in source and "scenario leaked across the split" in source
+
+
 def t_sfaf_onnx_export():
     """The SFAF edge export must match the trained model exactly (F03, F18)."""
     import importlib.util, numpy as np
@@ -1347,7 +1385,23 @@ def t_dataset_archives_extract_safely():
     with zipfile.ZipFile(good_zip, "w") as zf:
         zf.writestr("nested/data.csv", "a,b\n1,2\n")
     dl._safe_extract_zip(good_zip, dest)
-    assert os.path.exists(os.path.join(dest, "nested", "data.csv"))
+    good_out = os.path.join(dest, "nested", "data.csv")
+    assert open(good_out).read() == "a,b\n1,2\n"
+
+    # A pre-existing symlink at the member path must be rejected, never
+    # followed to overwrite a file outside the extraction root.
+    outside = os.path.join(TMP, "outside.csv")
+    with open(outside, "w") as f:
+        f.write("keep")
+    os.unlink(good_out)
+    os.symlink(outside, good_out)
+    try:
+        dl._safe_extract_zip(good_zip, dest)
+        raise AssertionError("archive extraction followed an existing symlink")
+    except ValueError as e:
+        assert "escapes destination" in str(e)
+    assert open(outside).read() == "keep"
+    assert os.path.islink(good_out)
 
     digest = hashlib.sha256(open(good_zip, "rb").read()).hexdigest()
     assert not dl._checksum_allows_extract(good_zip, None)
@@ -1571,6 +1625,7 @@ TESTS = [
         ("ips responder ladder", t_ips_responder),
         ("ips scope + nft idempotence", t_ips_scope_and_idempotence),
         ("IPS refreshes block deadline", t_ips_refreshes_block_deadline),
+        ("IPS state persistence is atomic", t_ips_state_is_atomic_and_failures_are_visible),
         ("incident watermarks are bounded", t_incident_watermarks_are_bounded),
         ("c export + compile", t_c_export),
         ("SFAF alignment contract", t_alignment_contract),
@@ -1596,6 +1651,7 @@ TESTS = [
         ("daemon live path (scapy)", t_live_path),
         ("daemon --help", t_daemon_help),
         ("SFAF trainer guard", t_sfaf_trainer_guard),
+        ("live trainer split guard survives -O", t_live_trainer_split_guard_survives_optimization),
         ("SFAF onnx export", t_sfaf_onnx_export),
         ("download_datasets runs", t_download_datasets_runs),
         ("download datasets dangling symlink", t_download_datasets_dangling_symlink),

@@ -63,6 +63,9 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 - [[F23 - Retracted thesis numbers still shipped as current]] — significant
 - [[F21 - Dataset entry point dies on an unmounted drive]] — moderate
 
+### Found during the independent 2026-08-22 follow-up
+- [[F24 - Independent security hardening follow-up]] — fixed
+
 ## Experiments
 
 - [[EXP01 - Cross-dataset study baseline]] — the numbers as they stood pre-fix
@@ -85,8 +88,8 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 
 ## Current state
 
-- 23 findings: 22 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
-- Test suite **61 passed / 0 failed** (was 23/1 before the first review), plus
+- 24 findings: 23 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
+- Test suite **63 passed / 0 failed** (was 23/1 before the first review), plus
   `ruff` in CI and a benchmark that exits non-zero on a failed section
 - Prior off-domain run: ROC-AUC 0.509 over 110 dataset pairs, now historical.
   Its diagonal was resubstitution, so no current gap is quoted pending the

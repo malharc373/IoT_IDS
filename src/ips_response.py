@@ -58,6 +58,7 @@ import shutil
 import ipaddress
 import subprocess
 import collections
+import tempfile
 
 NFT_TABLE = "iot_ids"
 NFT_BLOCK_SET = "blocked"
@@ -177,17 +178,48 @@ class Responder:
             self.active = {ip: v for ip, v in blocks.items() if v["until"] > now}
             self.throttled = {ip: v for ip, v in data.get("throttled", {}).items()
                               if v["until"] > now}
-        except Exception:
+        except FileNotFoundError:
             self.active = {}
             self.throttled = {}
+        except Exception as e:
+            self.active = {}
+            self.throttled = {}
+            self.log(f"[IPS] ignoring unreadable state file {self.state_path}: {e}")
 
     def _save_state(self):
+        """Persist responder state atomically and report durability failures.
+
+        Enforcement can outlive the daemon (notably nft set timeouts), so a
+        half-written or silently missing state file makes restart behaviour
+        disagree with the firewall.  Write beside the destination, fsync, and
+        atomically replace it; keep enforcement available but make any failure
+        visible to the operator.
+        """
+        tmp_path = None
         try:
-            os.makedirs(os.path.dirname(self.state_path), exist_ok=True)
-            with open(self.state_path, "w") as f:
+            state_dir = os.path.dirname(os.path.abspath(self.state_path))
+            os.makedirs(state_dir, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                "w",
+                dir=state_dir,
+                prefix=f".{os.path.basename(self.state_path)}.",
+                suffix=".tmp",
+                delete=False,
+            ) as f:
+                tmp_path = f.name
                 json.dump({"active": self.active, "throttled": self.throttled}, f)
-        except Exception:
-            pass
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, self.state_path)
+            return True
+        except Exception as e:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+            self.log(f"[IPS] failed to persist state to {self.state_path}: {e}")
+            return False
 
     # ── corroboration ─────────────────────────────────────────────────────────
     def _record_sighting(self, ip, now):

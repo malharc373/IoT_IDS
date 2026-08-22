@@ -59,7 +59,7 @@ the Pi.
 ## Half 2 — the SFAF cross-dataset study
 
 ```
-10 public datasets ─▶ multidataset.load() ─▶ 12-feature space ─▶ XGBoost
+11 public datasets ─▶ multidataset.load() ─▶ 12-feature space ─▶ XGBoost
                             │                                       │
                     alignment contract                   NxN transfer matrix
                     (units, derived, NaN)                LODO transform sweep
@@ -79,12 +79,17 @@ The notebooks in `code/*.ipynb` are a historical record of the thesis work; the
 
 ## Where the two halves meet
 
-Nowhere, by design — and that is the honest position. The live model is trained
-on synthetic traffic in the 22-feature space; the SFAF study measures transfer
-in the 12-feature space on real captures. The live model's ~100% is a statement
-about the generators ([[F13 - Live model in-domain metrics are leaky]]); the
-SFAF study's chance-level cross-domain transfer is the real-traffic finding
-([[EXP02 - Corrected alignment rerun]]).
+Nowhere, by design — and that is the honest position. The live model is a
+10-class model trained on synthetic traffic in the 22-feature space; the SFAF
+artifact is a binary research model in a different 12-feature space. It cannot
+be passed to the daemon or described as the deployed sensor model. Metadata now
+encodes this distinction and the daemon validates purpose, compatibility,
+feature names and semantic contract before loading ONNX.
+
+The live model's ~100% is a statement about the generators
+([[F13 - Live model in-domain metrics are leaky]]). Exact SFAF results are
+pending a protocol-correct rerun; the previous off-domain run is historical and
+its resubstitution diagonal is withdrawn ([[Remediation 2026-08-22]]).
 
 Closing that gap — running real labelled captures through
 `src/flow_features.py` end to end — is the top item in [[Future Work]].

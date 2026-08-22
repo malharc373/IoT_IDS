@@ -491,6 +491,21 @@ def t_model_artifacts():
     assert sess.get_inputs()[0].shape[1] == ff.N_FEATURES
 
 
+def t_daemon_rejects_research_model_contract():
+    import json as _json
+    from ids_daemon import Detector
+    live = _json.load(open(os.path.join(ROOT, "models", "live_meta.json")))
+    Detector._validate_meta(live)
+    research = {"purpose": "sfaf_cross_dataset_research",
+                "runtime_compatible": False,
+                "unified_features": ["Flow Duration"] * 12}
+    try:
+        Detector._validate_meta(research)
+        raise AssertionError("daemon accepted a 12-feature research model")
+    except ValueError as e:
+        assert "research artifact" in str(e)
+
+
 def t_ips_responder():
     """Graduated response + corroboration gate (vault/Findings/F06, F08, F09)."""
     from ips_response import Responder
@@ -1412,6 +1427,7 @@ TESTS = [
         ("traffic_gen CLI", t_traffic_gen_cli),
         ("build_corpus helper", t_build_corpus_helper),
         ("model artifacts", t_model_artifacts),
+        ("daemon rejects research model", t_daemon_rejects_research_model_contract),
         ("ips responder ladder", t_ips_responder),
         ("ips scope + nft idempotence", t_ips_scope_and_idempotence),
         ("IPS refreshes block deadline", t_ips_refreshes_block_deadline),

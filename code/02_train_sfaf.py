@@ -5,7 +5,7 @@
 This is a runnable, non-notebook version of 02_SFAF_Unified_Model.ipynb. It
 regenerates the deployment artifact that was gitignored out of the repo:
 
-    models/xgb_edge.onnx                 (edge model, raw 12 features)
+    models/xgb_edge.onnx                 (research binary model, raw 12 features)
 
 …plus models/xgb_unified.json, models/edge_meta.json and the thesis metrics.
 
@@ -237,6 +237,9 @@ def main():
         sys.exit("[ERROR] exported ONNX does not match the trained pipeline")
 
     meta = {
+        "purpose": "sfaf_cross_dataset_research",
+        "runtime_compatible": False,
+        "evidence_status": "requires protocol-correct rerun",
         "unified_features": UNIFIED_FEATURES,
         "feature_units": md.FEATURE_UNITS,
         "datasets": {n: int(len(frames[n])) for n in frames},

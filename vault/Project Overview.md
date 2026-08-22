@@ -37,18 +37,19 @@ captures is the top open item in [[Future Work]].
 
 ## Half 2 — the SFAF cross-dataset study
 
-Ten public IDS datasets aligned into one 12-feature space to **measure**, not
+Eleven public IDS datasets aligned into one 12-feature space to **measure**, not
 assert, how well flow behaviour transfers across labs, devices and tools.
 
-**The finding:** between arbitrary dataset pairs a supervised detector transfers
-**at chance** — mean ROC-AUC 0.514 against a 0.500 baseline, MCC −0.002, with
-80% of the 90 ordered pairs no better than answering "attack" to everything.
-No fixed feature transform closes it. Full result in
-[[EXP02 - Corrected alignment rerun]].
+**Current evidence status:** the previous off-diagonal run showed severe domain
+shift, but its diagonal evaluated training rows and the small-budget calibration
+summary skipped unlucky single-class draws. Exact headline results are withdrawn
+until the corrected protocol is rerun from the external datasets. See
+[[Remediation 2026-08-22]].
 
-One exception is the most actionable result in the study: held out on
-CICDDoS2019, the pooled model reaches **AUC 0.927 but F1 0.561** — the ranking
-transfers and only the decision threshold fails.
+The research artifact is binary and consumes 12 aligned dataset features. The
+live artifact is 10-class and consumes 22 packet-derived features. They are two
+prototypes, not one shared model; `models/README.md` records the boundary and the
+future integration gate.
 
 ## How to read this vault
 

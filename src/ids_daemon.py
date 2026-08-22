@@ -61,17 +61,28 @@ class Detector:
         if not os.path.exists(model_path):
             sys.exit(f"[ERROR] model not found: {model_path}\n"
                      f"        Run: python src/train_live_model.py")
-        self.sess = rt.InferenceSession(model_path)
-        self.input_name = self.sess.get_inputs()[0].name
         with open(meta_path) as f:
             self.meta = json.load(f)
+        self._validate_meta(self.meta)
+        self.sess = rt.InferenceSession(model_path)
+        self.input_name = self.sess.get_inputs()[0].name
         self.labels = {int(k): v for k, v in self.meta["labels"].items()}
         self.categories = self.meta.get("categories", {})
         CATEGORIES.update(self.categories)
-        assert self.meta["features"] == FEATURE_NAMES, "feature order mismatch!"
-        assert self.meta.get("feature_contract_version") == FEATURE_CONTRACT_VERSION, (
-            "feature semantics mismatch: retrain the model with the current "
-            "src/flow_features.py")
+
+    @staticmethod
+    def _validate_meta(meta):
+        if meta.get("purpose") != "live_multiclass_ids" or not meta.get(
+                "runtime_compatible", False):
+            raise ValueError(
+                "model metadata is not for the live 22-feature IDS; the SFAF "
+                "12-feature binary model is a research artifact, not a daemon model")
+        if meta.get("features") != FEATURE_NAMES:
+            raise ValueError("feature order mismatch: retrain the live model")
+        if meta.get("feature_contract_version") != FEATURE_CONTRACT_VERSION:
+            raise ValueError(
+                "feature semantics mismatch: retrain the model with the current "
+                "src/flow_features.py")
 
     def classify(self, vectors):
         if not vectors:

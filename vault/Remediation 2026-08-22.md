@@ -52,7 +52,7 @@ records the test evidence and commit that closed it.
 | R13 | P1 | Make Bot-IoT sampling memory-bounded and representative | verified | chunked reservoir regression |
 | R14 | P1 | Version IoT-23 preprocessing caches | verified | loader-digest cache regression |
 | R15 | P1 | Report threshold-transfer selection bias at small budgets | verified | unconditional-repeat regression |
-| R16 | P0 | Resolve 12-feature research vs 22-feature runtime disconnect | open | design/retrain |
+| R16 | P0 | Resolve 12-feature research vs 22-feature runtime disconnect | verified | explicit separation + runtime contract guard |
 | R17 | P1 | Secure dataset downloads (TLS, checksums, safe extraction) | open | pending |
 | R18 | P1 | Declare complete/reproducible dependencies and lock strategy | open | pending |
 | R19 | P1 | Replace stale report and presentation with editable sources | open | pending |
@@ -210,6 +210,38 @@ ruff check .      -> All checks passed
 **R22 preparation:** the benchmark no longer calls a host×12 estimate an
 “easily real-time” verdict. Its section is explicitly `UNVALIDATED`, states that
 `PI_FACTOR` is not a measurement, and prints the target-Pi acceptance gate.
+
+### 2026-08-22 — R16 resolved as an explicit two-prototype architecture
+
+The 12-feature SFAF binary model was not silently inserted into the live
+sensor. Its exact research evidence is currently withdrawn and it does not
+accept the 22-feature packet-derived vector; using it for enforcement would be
+both technically incompatible and scientifically unjustified.
+
+The boundary is now machine-enforced:
+
+- `live_meta.json` declares `purpose: live_multiclass_ids`,
+  `runtime_compatible: true`, feature contract v2, synthetic training data and
+  synthetic-only evidence scope;
+- future SFAF metadata declares `purpose: sfaf_cross_dataset_research` and
+  `runtime_compatible: false`;
+- `Detector` validates purpose, runtime compatibility, exact feature order and
+  semantic contract **before** creating an ONNX session, using `ValueError`
+  checks that cannot disappear under optimized Python;
+- a regression proves the daemon rejects research metadata; and
+- `models/README.md` is the artifact manifest and defines six gates for any
+  future dual-model fusion.
+
+The withdrawn `xgb_edge.onnx`, `edge_meta.json` and `xgb_unified.json` were
+preserved under `legacy/resubstitution-results/models/`. The live model remains
+in `models/`; no research artifact is presented as deployable.
+
+Evidence:
+
+```text
+pytest tests/ -q  -> 57 passed in 14.42s
+ruff check .      -> All checks passed
+```
 
 ## External blockers and boundaries
 

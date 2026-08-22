@@ -26,7 +26,7 @@ network attacks in real time on cheap hardware*:
    [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
 ```
-   ┌────────────────────────── shared detection core ──────────────────────────┐
+   ┌────────────────────────── live detection core ────────────────────────────┐
    │ packets → bidirectional flow table → 22-feature vector → model → verdict    │
    │                                                          ↳ IPS block/limit  │
    └────────────────────────────────────────────────────────────────────────────┘
@@ -244,9 +244,10 @@ models/
   live_ids.onnx        deployable edge model (~96 KB, raw features — trees are
                        scale-invariant, so there is no scaler to drift)
   live_ids.h           dependency-free C model for microcontrollers
-  live_meta.json       feature order, labels, categories, metrics, ablation
+  live_meta.json       purpose, feature contract, labels, metrics, evidence scope
+  README.md            artifact manifest + research/runtime separation
 tests/
-  smoke_test.py        24 checks over every module/script
+  smoke_test.py        regression checks over every module/script
 .env.example           optional configuration template (copy to .env)
 ```
 

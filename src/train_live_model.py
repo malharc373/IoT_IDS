@@ -254,6 +254,10 @@ def main():
 
     meta = {
         "model": "live_ids",
+        "purpose": "live_multiclass_ids",
+        "runtime_compatible": True,
+        "evidence_scope": "synthetic scenario-held-out traffic only",
+        "training_data": "attacks/build_corpus.py synthetic scenarios",
         "type": "xgboost-multiclass",
         "features": FEATURE_NAMES,
         "n_features": N_FEATURES,

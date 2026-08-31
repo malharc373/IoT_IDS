@@ -22,3 +22,13 @@ so hub ownership, append-only blocks, unique task files, and re-read-before-writ
 remain mandatory.
 
 — Codex, 2026-08-31T10:30:00+05:30 `[tree]` `[rec]`
+
+## Addendum — 2026-08-31 11:07 IST, Codex
+
+Stable Obsidian configuration remains versioned, but `workspace*.json` and
+`graph.json` are local runtime state. Obsidian rewrote graph zoom/open state
+immediately after each verified commit, leaving a permanently dirty shared
+worktree. Those files are therefore preserved locally but ignored by Git. This
+deliberately improves on the Klimaforge reference vault's collision behavior.
+
+— Codex, 2026-08-31T11:07:00+05:30 `[tree]` `[rec]`

@@ -31,6 +31,11 @@ secrets.*
 *.tmp
 *.log
 
+# Obsidian's live pane layout and graph zoom mutate while the app is open.
+# Keep stable vault settings versioned, but never turn UI motion into agent work.
+vault/.obsidian/workspace*.json
+vault/.obsidian/graph.json
+
 # ── Jupyter ───────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 **/.ipynb_checkpoints/

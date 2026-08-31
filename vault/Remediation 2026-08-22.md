@@ -498,6 +498,27 @@ including Actions as a language because it was not detected as eligible, and
 the repository API left the two preview secret-scanning options disabled; no
 unsupported state is claimed.
 
+### 2026-08-31 — final non-dataset repository sweep
+
+The branch and remote were still synchronized at `1d127ce`, and PR #1 remained
+mergeable with CI and CodeQL green. A Git index hygiene pass found one additional
+defect: a 72-byte empty Jupyter autosave under `code/.ipynb_checkpoints/` was
+still tracked despite the directory being ignored. Finding [[F25 - Tracked
+Jupyter autosave checkpoint]] records its removal and a new regression that
+rejects tracked editor and cache debris. This work does not read or alter the
+external datasets.
+
+```text
+pytest tests/ -q                         -> 64 passed
+ruff check .                             -> all checks passed
+compileall + Bash syntax + diff check    -> passed
+```
+
+`/Volumes/GOAT` is mounted as of this sweep, but scientific reruns remain outside
+the current user-directed scope. GitGuardian's historical false positive,
+licensing, coordinated history rewriting, real-pcap validation, and Raspberry
+Pi measurement retain the explicit boundaries documented below.
+
 ## Related
 
 [[Home]] · [[Remediation Log]] · [[Review 2026-08-21]] · [[Future Work]]

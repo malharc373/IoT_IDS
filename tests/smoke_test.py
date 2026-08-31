@@ -878,6 +878,28 @@ def t_no_credential_literals():
     assert not hits, "credential-shaped literals found:\n  " + "\n  ".join(hits)
 
 
+def t_no_tracked_workspace_debris():
+    """Editor autosaves and interpreter caches must not enter Git."""
+    tracked = subprocess.run(
+        ["git", "-C", ROOT, "ls-files", "-z"],
+        capture_output=True, check=True).stdout.decode("utf-8", errors="surrogateescape")
+    paths = [path for path in tracked.split("\0") if path]
+    forbidden_parts = {
+        ".ipynb_checkpoints", ".pytest_cache", ".ruff_cache", ".mypy_cache",
+        "__pycache__", ".DS_Store",
+    }
+    debris = []
+    for path in paths:
+        # A deletion that has not yet been committed remains in the index and
+        # therefore in `ls-files`; it is not debris in the working tree.
+        if not os.path.lexists(os.path.join(ROOT, path)):
+            continue
+        parts = path.split("/")
+        if forbidden_parts.intersection(parts) or path.endswith((".pyc", ".pyo", ".swp", "~")):
+            debris.append(path)
+    assert not debris, "tracked editor/cache debris:\n  " + "\n  ".join(debris)
+
+
 def t_dashboard_incremental_and_rotation():
     """Only appended bytes are parsed; rotation is detected (F10)."""
     import importlib.util, json as _json
@@ -1643,6 +1665,7 @@ TESTS = [
         ("dashboard token file", t_dashboard_token_file),
         ("documented counts match code", t_documented_counts_match_code),
         ("no credential literals", t_no_credential_literals),
+        ("no tracked workspace debris", t_no_tracked_workspace_debris),
         ("dashboard incremental reads", t_dashboard_incremental_and_rotation),
         ("alert log rotation", t_alert_log_rotation),
         ("detector classify known", t_detector_classify_known),

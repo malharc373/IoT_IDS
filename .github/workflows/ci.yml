@@ -34,8 +34,8 @@ jobs:
       - name: Regenerate default macOS locks
         run: |
           python -m pip install --quiet pip-tools==7.6.1
-          pip-compile --quiet --strip-extras --output-file=requirements.txt requirements.in
-          pip-compile --quiet --strip-extras --output-file=requirements-dev.txt requirements-dev.in
+          pip-compile --quiet --no-header --strip-extras --output-file=requirements.txt requirements.in
+          pip-compile --quiet --no-header --strip-extras --output-file=requirements-dev.txt requirements-dev.in
           git diff --exit-code -- requirements.txt requirements-dev.txt
 
   test:
@@ -56,9 +56,9 @@ jobs:
 
       - name: Dependency locks are current
         run: |
-          pip-compile --quiet --strip-extras --output-file=requirements-linux-x86_64.txt requirements-linux-x86_64.in
-          pip-compile --quiet --strip-extras --output-file=requirements-dev-linux-x86_64.txt requirements-dev-linux-x86_64.in
-          pip-compile --quiet --strip-extras --output-file=deploy/requirements-pi.txt deploy/requirements-pi.in
+          pip-compile --quiet --no-header --strip-extras --output-file=requirements-linux-x86_64.txt requirements-linux-x86_64.in
+          pip-compile --quiet --no-header --strip-extras --output-file=requirements-dev-linux-x86_64.txt requirements-dev-linux-x86_64.in
+          pip-compile --quiet --no-header --strip-extras --output-file=deploy/requirements-pi.txt deploy/requirements-pi.in
           git diff --exit-code -- requirements-linux-x86_64.txt requirements-dev-linux-x86_64.txt deploy/requirements-pi.txt
 
       # Pyflakes-class rules only — undefined names, unused imports, dead

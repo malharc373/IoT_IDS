@@ -68,6 +68,7 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 
 ### Found during the final non-dataset sweep (2026-08-31)
 - [[F25 - Tracked Jupyter autosave checkpoint]] — fixed
+- [[F26 - Lock freshness depended on runner environment]] — fixed
 
 ## Experiments
 
@@ -91,7 +92,7 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 
 ## Current state
 
-- 25 findings: 24 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
+- 26 findings: 25 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
 - Test suite **64 passed / 0 failed** (was 23/1 before the first review), plus
   `ruff` in CI and a benchmark that exits non-zero on a failed section
 - Prior off-domain run: ROC-AUC 0.509 over 110 dataset pairs, now historical.

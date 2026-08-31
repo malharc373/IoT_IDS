@@ -514,6 +514,13 @@ ruff check .                             -> all checks passed
 compileall + Bash syntax + diff check    -> passed
 ```
 
+The first CI run for this sweep (`33357756792`) then exposed an
+environment-only reproducibility fault. The macOS runner injected
+`PIP_NO_INDEX`, which `pip-compile` copied into its generated command header;
+the dependency pins were unchanged. [[F26 - Lock freshness depended on runner
+environment]] records the fix: all platform lock commands now use `--no-header`,
+so ambient resolver settings cannot create a header-only diff.
+
 `/Volumes/GOAT` is mounted as of this sweep, but scientific reruns remain outside
 the current user-directed scope. GitGuardian's historical false positive,
 licensing, coordinated history rewriting, real-pcap validation, and Raspberry

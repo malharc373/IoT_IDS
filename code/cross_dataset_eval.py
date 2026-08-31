@@ -10,14 +10,42 @@ splitting one merged corpus (which leaks near-duplicates across the split), we:
   3. report binary attack-vs-benign metrics per held-out dataset.
 
 Two experiments:
-  * NxN matrix    — train on each dataset, test on every dataset. The diagonal
-                    is in-domain performance; off-diagonal is cross-dataset
-                    generalisation.
+  * NxN matrix    — train on a fixed 80% split of each dataset, test the diagonal
+                    on its untouched 20% and every off-diagonal cell on the
+                    independent target dataset. No cell evaluates training rows.
   * pooled held-out — train on a chosen set, evaluate each held-out dataset.
 
+
+WHY F1 ALONE IS NOT ENOUGH  (see vault/Findings/F02)
+----------------------------------------------------
+On a class-balanced test set, a classifier that predicts "attack" for every
+single row scores **F1 = 0.667**. That is not a hypothetical: in the pre-2026-08
+matrix, 21% of off-diagonal cells sat in [0.63, 0.70] and the row the write-up
+called "generalizes best" was 0.667 almost uniformly — a degenerate all-attack
+predictor being read as successful transfer.
+
+F1 is also threshold-dependent. Under domain shift a model's probabilities
+routinely stay well-ordered while their *calibration* drifts, so a fixed 0.5
+cut can report F1 ≈ 0 for a model whose ranking is still informative. "No signal
+transfers" and "the signal transfers but the threshold moved" are completely
+different research findings and F1-at-0.5 cannot distinguish them.
+
+So every cell now reports:
+
+  roc_auc   threshold-free ranking quality.   0.5 = no signal.  PRIMARY METRIC.
+  ap        average precision (PR-AUC), threshold-free, prevalence-aware.
+  mcc       Matthews correlation.             0.0 = no better than chance.
+  bal_acc   balanced accuracy.                0.5 = chance.
+  f1        kept for continuity with earlier results.
+  f1_trivial  what always-predict-attack scores on THIS test set: 2p/(1+p).
+  f1_lift     f1 - f1_trivial. Negative means worse than the trivial baseline.
+
 Outputs (demo/results/):
-  cross_dataset_matrix.csv / .png     F1 heatmap, train (rows) x test (cols)
-  cross_dataset_heldout.csv           pooled-train per-held-out-dataset metrics
+  cross_dataset_auc_matrix.csv / .png   ROC-AUC heatmap  (primary)
+  cross_dataset_matrix.csv / .png       F1 heatmap       (continuity)
+  cross_dataset_lift_matrix.csv         F1 minus trivial-baseline F1
+  cross_dataset_metrics_long.csv        every metric, tidy long format
+  cross_dataset_heldout.csv             pooled-train per-held-out-dataset metrics
 """
 from __future__ import annotations
 
@@ -32,7 +60,11 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import f1_score, accuracy_score, recall_score
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    f1_score, accuracy_score, recall_score, roc_auc_score,
+    average_precision_score, matthews_corrcoef, balanced_accuracy_score,
+)
 from xgboost import XGBClassifier
 
 warnings.filterwarnings("ignore")
@@ -43,6 +75,17 @@ import multidataset as md  # noqa: E402
 
 RESULTS = os.path.join(ROOT, "demo", "results")
 RS = 42
+
+
+def trivial_f1(y):
+    """F1 of the all-positive ('everything is an attack') classifier.
+
+    precision = prevalence p, recall = 1  =>  F1 = 2p / (1 + p).
+    Any reported F1 at or below this number is evidence of a degenerate
+    classifier, not of transfer.
+    """
+    p = float(np.mean(y))
+    return 2 * p / (1 + p) if p > 0 else 0.0
 
 
 def balanced(df, cap):
@@ -64,16 +107,33 @@ def load_all(names, cap):
     data = {}
     for n in names:
         try:
-            df = balanced(md.load(n), cap)
-            if df.y.nunique() >= 1 and len(df) > 100:
+            raw = md.load(n)
+            report = raw.attrs.get("alignment_report", {})
+            df = balanced(raw, cap)
+            if df.y.nunique() >= 2 and len(df) > 100:
                 data[n] = df
-                print(f"  loaded {n:18} n={len(df):>7,} attack%={df.y.mean()*100:5.1f}")
+                quality = ""
+                if report.get("rows_missing_supplied"):
+                    quality = (f" missing-supplied="
+                               f"{report['rows_missing_supplied']:,}/"
+                               f"{report['output_rows']:,}")
+                print(f"  loaded {n:18} n={len(df):>7,} attack%={df.y.mean()*100:5.1f} "
+                      f"trivial_F1={trivial_f1(df.y.values):.3f}{quality}")
+            else:
+                print(f"  SKIP {n}: need >100 rows and both classes "
+                      f"(n={len(df):,}, classes={df.y.nunique()})")
         except Exception as e:
             print(f"  SKIP {n}: {e}")
     return data
 
 
 def _fit(train_df):
+    """StandardScaler + XGBoost.
+
+    Both handle NaN natively (the scaler ignores it in fit and preserves it in
+    transform; XGBoost learns a default split direction for it), which is what
+    lets structurally-absent features stay NaN instead of being zero-filled.
+    """
     sc = StandardScaler().fit(train_df[md.UNIFIED_FEATURES].values.astype(np.float32))
     Xtr = sc.transform(train_df[md.UNIFIED_FEATURES].values.astype(np.float32))
     clf = XGBClassifier(n_estimators=120, max_depth=6, learning_rate=0.3,
@@ -84,52 +144,147 @@ def _fit(train_df):
 
 
 def _eval(sc, clf, test_df):
+    """Full metric set for one (model, test set) pair."""
     X = sc.transform(test_df[md.UNIFIED_FEATURES].values.astype(np.float32))
     p = clf.predict(X)
     y = test_df.y.values
-    out = {"f1": f1_score(y, p, zero_division=0),
-           "acc": accuracy_score(y, p),
-           "recall": recall_score(y, p, zero_division=0)}
+    both = len(np.unique(y)) > 1          # AUC/AP undefined on a single class
+
+    if both:
+        try:
+            prob = clf.predict_proba(X)[:, 1]
+        except Exception:
+            prob = p.astype(float)
+        auc = roc_auc_score(y, prob)
+        ap = average_precision_score(y, prob)
+    else:
+        auc = ap = float("nan")
+
+    tf1 = trivial_f1(y)
+    f1 = f1_score(y, p, zero_division=0)
+    out = {
+        "roc_auc": auc,
+        "ap": ap,
+        "mcc": matthews_corrcoef(y, p) if both else float("nan"),
+        "bal_acc": balanced_accuracy_score(y, p) if both else float("nan"),
+        "f1": f1,
+        "f1_trivial": tf1,
+        "f1_lift": f1 - tf1,
+        "acc": accuracy_score(y, p),
+        "recall": recall_score(y, p, zero_division=0),
+        "prevalence": float(np.mean(y)),
+    }
     neg = y == 0
     out["fpr"] = float((p[neg] == 1).mean()) if neg.any() else float("nan")
     return out
 
 
-def nxn_matrix(data, out_png, out_csv):
-    names = list(data)
-    fitted = {n: _fit(data[n]) for n in names}
-    print("  trained per-dataset models")
-    M = pd.DataFrame(index=names, columns=names, dtype=float)
-    for tr in names:
-        sc, clf = fitted[tr]
-        for te in names:
-            M.loc[tr, te] = round(_eval(sc, clf, data[te])["f1"], 3)
-    M.to_csv(out_csv)
-
+def _heatmap(M, title, path, cmap="RdYlGn", vmin=0.0, vmax=1.0, midline=None):
+    names = list(M.index)
     fig, ax = plt.subplots(figsize=(1.1 * len(names) + 2, 1.0 * len(names) + 1.5))
-    im = ax.imshow(M.values.astype(float), cmap="RdYlGn", vmin=0, vmax=1)
+    im = ax.imshow(M.values.astype(float), cmap=cmap, vmin=vmin, vmax=vmax)
     ax.set_xticks(range(len(names))); ax.set_yticks(range(len(names)))
     ax.set_xticklabels(names, rotation=45, ha="right", fontsize=8)
     ax.set_yticklabels(names, fontsize=8)
     ax.set_xlabel("TEST dataset"); ax.set_ylabel("TRAIN dataset")
-    ax.set_title("Cross-dataset binary F1 (diagonal = in-domain)")
+    ax.set_title(title, fontsize=10)
     for i in range(len(names)):
         for j in range(len(names)):
             v = M.values[i, j]
-            ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=7,
-                    color="black")
-    fig.colorbar(im, fraction=0.046, pad=0.04)
-    plt.tight_layout(); plt.savefig(out_png, dpi=150)
-    print(f"  wrote {out_csv} and {out_png}")
+            if not np.isnan(v):
+                ax.text(j, i, f"{v:.2f}", ha="center", va="center", fontsize=7,
+                        color="black")
+    cb = fig.colorbar(im, fraction=0.046, pad=0.04)
+    if midline is not None:
+        cb.ax.axhline(midline, color="black", lw=1.4)
+        cb.ax.text(1.6, midline, " chance", fontsize=7, va="center",
+                   transform=cb.ax.get_yaxis_transform())
+    plt.tight_layout(); plt.savefig(path, dpi=150); plt.close(fig)
 
-    # summary: mean off-diagonal (cross-domain) vs diagonal (in-domain)
-    vals = M.values.astype(float)
-    diag = np.diag(vals).mean()
-    off = (vals.sum() - np.diag(vals).sum()) / (vals.size - len(names))
-    print(f"\n  in-domain mean F1     : {diag:.3f}")
-    print(f"  cross-domain mean F1  : {off:.3f}")
-    print(f"  generalisation gap    : {(diag-off):.3f}")
-    return M
+
+def _in_domain_splits(data, test_size=0.2):
+    """One deterministic stratified split per dataset for the entire matrix.
+
+    The former diagonal trained on `data[n]` and evaluated the same rows, so its
+    near-perfect AUC was resubstitution—not in-domain generalisation. Using the
+    same training split for every cell in a row keeps the row model constant.
+    """
+    train, test = {}, {}
+    for name, df in data.items():
+        if df.y.nunique() < 2:
+            raise ValueError(f"{name}: NxN training needs both benign and attack rows")
+        tr, te = train_test_split(
+            df, test_size=test_size, random_state=RS, stratify=df.y)
+        train[name] = tr.reset_index(drop=True)
+        test[name] = te.reset_index(drop=True)
+    return train, test
+
+
+def nxn_matrix(data, results_dir):
+    names = list(data)
+    if len(names) < 2:
+        raise ValueError("NxN evaluation needs at least two two-class datasets")
+    train_data, in_domain_test = _in_domain_splits(data)
+    fitted = {n: _fit(train_data[n]) for n in names}
+    print("  trained per-dataset models on fixed stratified 80% splits")
+
+    long_rows = []
+    for tr in names:
+        sc, clf = fitted[tr]
+        for te in names:
+            in_domain = tr == te
+            eval_df = in_domain_test[te] if in_domain else data[te]
+            m = _eval(sc, clf, eval_df)
+            long_rows.append({
+                "train": tr, "test": te, "in_domain": in_domain,
+                "evaluation": ("held_out_20pct" if in_domain
+                               else "independent_dataset"),
+                "n_train": len(train_data[tr]), "n_eval": len(eval_df), **m,
+            })
+    long = pd.DataFrame(long_rows)
+    long_path = os.path.join(results_dir, "cross_dataset_metrics_long.csv")
+    long.round(4).to_csv(long_path, index=False)
+
+    mats = {}
+    for metric, fname, title, cmap, vmin, vmax, mid in [
+        ("roc_auc", "cross_dataset_auc_matrix",
+         "Cross-dataset ROC-AUC (diagonal = held-out in-domain 20%)",
+         "RdYlGn", 0.0, 1.0, 0.5),
+        ("f1", "cross_dataset_matrix",
+         "Cross-dataset binary F1 (diagonal = held-out in-domain 20%)",
+         "RdYlGn", 0.0, 1.0, None),
+        ("f1_lift", "cross_dataset_lift_matrix",
+         "F1 minus trivial all-attack baseline (<= 0 means degenerate)",
+         "RdYlGn", -0.7, 0.7, None),
+    ]:
+        M = long.pivot(index="train", columns="test", values=metric).loc[names, names]
+        M.round(3).to_csv(os.path.join(results_dir, fname + ".csv"))
+        _heatmap(M.round(3), title, os.path.join(results_dir, fname + ".png"),
+                 cmap=cmap, vmin=vmin, vmax=vmax, midline=mid)
+        mats[metric] = M
+    print(f"  wrote AUC / F1 / lift matrices and {os.path.basename(long_path)}")
+
+    # ── summary ───────────────────────────────────────────────────────────────
+    off = long[~long.in_domain]
+    dia = long[long.in_domain]
+    print("\n  " + "-" * 62)
+    print(f"  {'metric':<12}{'in-domain':>12}{'cross-domain':>14}{'gap':>10}{'chance':>10}")
+    print("  " + "-" * 62)
+    for metric, chance in [("roc_auc", "0.500"), ("ap", "= prev"), ("mcc", "0.000"),
+                           ("bal_acc", "0.500"), ("f1", "= 2p/(1+p)")]:
+        d, o = dia[metric].mean(), off[metric].mean()
+        print(f"  {metric:<12}{d:>12.3f}{o:>14.3f}{d-o:>10.3f}{chance:>10}")
+    print("  " + "-" * 62)
+
+    n_degen = int((off.f1_lift <= 0).sum())
+    print(f"\n  off-diagonal cells at or below the trivial all-attack baseline: "
+          f"{n_degen}/{len(off)} ({n_degen/len(off)*100:.0f}%)")
+    n_chance = int((off.roc_auc <= 0.55).sum())
+    print(f"  off-diagonal cells with ROC-AUC <= 0.55 (no usable signal)      : "
+          f"{n_chance}/{len(off)} ({n_chance/len(off)*100:.0f}%)")
+    print("\n  Read the AUC matrix first: it separates 'no signal transfers' from")
+    print("  'signal transfers but the decision threshold moved'.")
+    return long
 
 
 def pooled_heldout(data, train_names, out_csv):
@@ -142,11 +297,14 @@ def pooled_heldout(data, train_names, out_csv):
     sc, clf = _fit(train_df)
     print(f"\n  pooled train on {train_names} (n={len(train_df):,})")
     rows = []
+    print(f"    {'held out':<18}{'AUC':>7}{'AP':>7}{'MCC':>7}{'balAcc':>8}"
+          f"{'F1':>7}{'triv':>7}{'lift':>7}{'FPR':>7}")
     for n in held:
         m = _eval(sc, clf, data[n])
         rows.append({"held_out": n, **{k: round(v, 4) for k, v in m.items()}})
-        print(f"    {n:18} F1={m['f1']:.3f} acc={m['acc']:.3f} "
-              f"recall={m['recall']:.3f} benign_FPR={m['fpr']:.3f}")
+        print(f"    {n:<18}{m['roc_auc']:>7.3f}{m['ap']:>7.3f}{m['mcc']:>7.3f}"
+              f"{m['bal_acc']:>8.3f}{m['f1']:>7.3f}{m['f1_trivial']:>7.3f}"
+              f"{m['f1_lift']:>+7.3f}{m['fpr']:>7.3f}")
     pd.DataFrame(rows).to_csv(out_csv, index=False)
     print(f"  wrote {out_csv}")
 
@@ -162,10 +320,9 @@ def main():
     names = md.available()
     print(f"Loading {len(names)} datasets (cap {args.cap:,}/dataset)...")
     data = load_all(names, args.cap)
-    print(f"\n=== Experiment 1: NxN cross-dataset F1 matrix ===")
-    nxn_matrix(data, os.path.join(RESULTS, "cross_dataset_matrix.png"),
-               os.path.join(RESULTS, "cross_dataset_matrix.csv"))
-    print(f"\n=== Experiment 2: pooled-train, held-out test ===")
+    print("\n=== Experiment 1: NxN cross-dataset transfer matrix ===")
+    nxn_matrix(data, RESULTS)
+    print("\n=== Experiment 2: pooled-train, held-out test ===")
     pooled_heldout(data, args.train.split(","),
                    os.path.join(RESULTS, "cross_dataset_heldout.csv"))
 

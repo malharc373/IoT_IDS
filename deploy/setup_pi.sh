@@ -19,6 +19,30 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RUN_USER="${SUDO_USER:-$(whoami)}"
 VENV="$REPO_DIR/.venv"
 PY="$VENV/bin/python"
+# The dashboard exposes the alert feed (attacking hosts, blocked hosts, segment
+# addressing), so reaching it over the LAN requires a token. Reuse the existing
+# one across re-runs so bookmarked URLs keep working.
+#
+# The token lives ONLY in this 600 file. It is deliberately not placed in the
+# systemd unit via Environment= (units are world-readable and the value shows up
+# in `systemctl show`) and not passed as an argument (visible to any local user
+# in `ps`). The service reads it with --token-file.
+TOKEN_FILE="${IOTIDS_DASHBOARD_TOKEN_FILE:-$REPO_DIR/logs/dashboard.token}"
+mkdir -p "$(dirname "$TOKEN_FILE")"
+if [ -s "$TOKEN_FILE" ]; then
+    DASH_TOKEN="$(cat "$TOKEN_FILE")"
+else
+    DASH_TOKEN="$(head -c 18 /dev/urandom | base64 | tr -d '/+=' )"
+    printf '%s' "$DASH_TOKEN" > "$TOKEN_FILE"
+    chmod 600 "$TOKEN_FILE"
+fi
+chown "$RUN_USER" "$TOKEN_FILE" 2>/dev/null || true
+
+# CI exercises this initialization under `set -u` without installing packages
+# or writing systemd units. It also gives operators a safe configuration check.
+if [ "${IOTIDS_SETUP_PREFLIGHT_ONLY:-0}" = "1" ]; then
+    exit 0
+fi
 
 echo "=== IoT-IDS Pi setup ==="
 echo "  repo      : $REPO_DIR"
@@ -82,7 +106,7 @@ Wants=network-online.target
 Type=simple
 User=$RUN_USER
 WorkingDirectory=$REPO_DIR
-ExecStart=$PY $REPO_DIR/src/dashboard.py --port $DASH_PORT --log $REPO_DIR/logs/alerts.jsonl
+ExecStart=$PY $REPO_DIR/src/dashboard.py --host 0.0.0.0 --port $DASH_PORT --token-file $TOKEN_FILE --log $REPO_DIR/logs/alerts.jsonl
 Restart=on-failure
 RestartSec=3
 StandardOutput=journal
@@ -101,7 +125,10 @@ IP_ADDR="$(hostname -I 2>/dev/null | awk '{print $1}')"; IP_ADDR="${IP_ADDR:-<pi
 echo
 echo "=== Done ==="
 echo "Start both :  sudo systemctl start iot-ids iot-ids-dashboard"
-echo "Dashboard  :  http://$IP_ADDR:$DASH_PORT"
+echo "Dashboard  :  http://$IP_ADDR:$DASH_PORT/?token=$DASH_TOKEN"
+echo "             (token stored at $TOKEN_FILE, mode 600)"
+echo "             for no token at all, tunnel instead:"
+echo "               ssh -L $DASH_PORT:127.0.0.1:$DASH_PORT $RUN_USER@$IP_ADDR"
 echo "Sensor logs:  journalctl -u iot-ids -f"
 echo "Dash logs  :  journalctl -u iot-ids-dashboard -f"
 echo "Alerts     :  tail -f $REPO_DIR/logs/alerts.jsonl"

@@ -3,8 +3,8 @@
 benchmark.py — full system benchmark: accuracy, speed, efficiency, footprint.
 
 Measures the live edge IDS end-to-end on real artifacts and writes a report to
-demo/results/BENCHMARK.md (+ latency chart). All numbers are measured here, not
-assumed; Raspberry Pi figures are the host measurement scaled by PI_FACTOR.
+demo/results/BENCHMARK.md (+ latency chart). All published numbers are measured
+on the named host; a non-Pi run does not invent target-hardware estimates.
 
 Sections:
   1. Model parameters      trees / nodes / features / classes / sizes
@@ -14,7 +14,7 @@ Sections:
   5. End-to-end            pcap -> verdicts wall time
   6. Accuracy              held-out multiclass acc, macro-F1, per-class recall, FPR
   7. Memory footprint      process RSS + model RAM
-  8. Raspberry Pi estimate host latency x PI_FACTOR
+  8. Target-hardware identity / acceptance gate
 """
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ import json
 import time
 import platform
 import subprocess
-import statistics as st
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -34,10 +33,6 @@ sys.path.insert(0, os.path.join(ROOT, "attacks"))
 MODELS = os.path.join(ROOT, "models")
 RESULTS = os.path.join(ROOT, "demo", "results")
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
-
-# Raspberry Pi 4 is ~10-15x slower than a modern laptop core on this workload;
-# use a conservative 12x to project. Replace with a real Pi run when available.
-PI_FACTOR = 12.0
 
 REPORT = []
 def out(s=""):
@@ -79,12 +74,24 @@ def bench_params():
         leaf = f" / {n_leaves:,} leaves" if n_leaves else ""
         out(f"  Total nodes            : {n_nodes:,}{leaf}")
     else:
-        out(f"  Boosted trees / nodes  : (xgboost not installed — skipped)")
+        out("  Boosted trees / nodes  : (xgboost not installed — skipped)")
     out(f"  ONNX model size        : {sizes['live_ids.onnx']/1024:.1f} KB")
     if "live_ids.h" in sizes:
         cd = f" (~{n_nodes*16//1024} KB const data)" if n_nodes else ""
         out(f"  C header size          : {sizes['live_ids.h']/1024:.1f} KB{cd}")
     out(f"  In-domain metrics      : {meta['metrics']}")
+    if meta.get("split"):
+        out(f"  Split                  : {meta['split']}")
+    abl = meta.get("ablation_no_dst_port")
+    if abl:
+        out(f"  Without dst_port       : acc={abl['multiclass_accuracy']} "
+            f"(delta {abl['accuracy_delta']:+.4f}) — the model is not a port lookup")
+    out("  CAVEAT                 : these are SYNTHETIC-traffic numbers. The")
+    out("                           corpus is trivially separable (scenario-level")
+    out("                           split, mixed benign background and a dst_port")
+    out("                           ablation all leave the score unchanged), so")
+    out("                           read them as a property of the generators,")
+    out("                           not as detection accuracy on real traffic.")
     return meta, sizes, n_trees, n_nodes or 0
 
 
@@ -133,20 +140,20 @@ def bench_c(nf):
     import tempfile
     tmp = tempfile.mkdtemp()
     shutil.copy(hdr, tmp)
-    prog = f"""#include <stdio.h>
+    prog = """#include <stdio.h>
 #include <time.h>
 #include <stdlib.h>
 #include "live_ids.h"
-int main(){{
+int main(){
   int N=200000; float x[IDS_NUM_FEATURES];
   for(int i=0;i<IDS_NUM_FEATURES;i++) x[i]=(float)(rand()%1000)/100.0f;
   volatile int s=0;
   struct timespec a,b; clock_gettime(CLOCK_MONOTONIC,&a);
-  for(int i=0;i<N;i++){{ x[i%IDS_NUM_FEATURES]+=0.001f; s+=ids_predict(x); }}
+  for(int i=0;i<N;i++){ x[i%IDS_NUM_FEATURES]+=0.001f; s+=ids_predict(x); }
   clock_gettime(CLOCK_MONOTONIC,&b);
   double ns=((b.tv_sec-a.tv_sec)*1e9+(b.tv_nsec-a.tv_nsec))/N;
   printf("%.3f\\n", ns); return s&0;
-}}"""
+}"""
     open(os.path.join(tmp, "b.c"), "w").write(prog)
     subprocess.run([cc, "-O3", "-I", tmp, "-o", os.path.join(tmp, "b"),
                     os.path.join(tmp, "b.c")], check=True)
@@ -155,7 +162,7 @@ int main(){{
     shutil.rmtree(tmp, ignore_errors=True)
     out(f"  C ids_predict latency  : {ns:.1f} ns/flow ({ns/1000:.3f} us)")
     out(f"  C throughput           : {1e9/ns:,.0f} flows/s (single thread)")
-    out(f"  runtime deps           : none (pure C99, ~130 B stack)")
+    out("  runtime deps           : none (pure C99, ~130 B stack)")
     return ns
 
 
@@ -171,8 +178,8 @@ def bench_extract():
     t_read = time.perf_counter() - t0
     t0 = time.perf_counter()
     table = FlowTable(); npk = 0
-    for ts, raw in recs:
-        pk = parse_raw(raw)
+    for ts, raw, orig_len in recs:
+        pk = parse_raw(raw, orig_len)
         if pk: table.add_packet(pk, ts); npk += 1
     flows = table.extract(min_pkts=1)
     t_proc = time.perf_counter() - t0
@@ -194,8 +201,8 @@ def bench_e2e():
     pcap = os.path.join(ROOT, "data", "pcaps", "demo_mixed.pcap")
     t0 = time.perf_counter()
     table = FlowTable()
-    for ts, raw in read_pcap(pcap):
-        pk = parse_raw(raw)
+    for ts, raw, orig_len in read_pcap(pcap):
+        pk = parse_raw(raw, orig_len)
         if pk: table.add_packet(pk, ts)
     flows = table.extract(min_pkts=1)
     vecs = [v for _, v in flows]
@@ -211,10 +218,6 @@ def bench_e2e():
 # ── 6. accuracy (held-out) ────────────────────────────────────────────────────
 def bench_accuracy():
     section("6. ACCURACY (held-out, unseen-seed synthetic)")
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "val", os.path.join(ROOT, "demo", "validate.py"))
-    val = importlib.util.module_from_spec(spec)
     from ids_daemon import Detector
     import traffic_gen as tg
     from flow_features import FlowTable, parse_raw
@@ -264,8 +267,33 @@ def bench_accuracy():
         if m.any():
             out(f"    {k:<16} {_recall(m, yp == i)*100:5.1f}%")
     out("\n  NOTE: synthetic traffic is separable; see CROSS_DATASET_FINDINGS.md")
-    out("        for the honest cross-dataset numbers (in-domain 0.98 vs cross 0.45).")
+    for line in _cross_dataset_note():
+        out(f"        {line}")
     return acc, mf1, det_rate, fpr
+
+
+def _cross_dataset_note():
+    """Read the cross-dataset headline out of the results CSV.
+
+    These two lines were hardcoded, so they still quoted the ten-dataset run
+    (AUC 0.514, MCC -0.002) after the study was rerun on eleven datasets
+    (0.509 / -0.007) — a stale number in a generated report, which is the class
+    of problem this whole benchmark exists to avoid (vault/Findings/F22).
+    """
+    csv_path = os.path.join(RESULTS, "cross_dataset_metrics_long.csv")
+    if not os.path.exists(csv_path):
+        return ["cross-dataset exact numbers withdrawn; protocol-correct rerun pending."]
+    import pandas as pd
+    df = pd.read_csv(csv_path)
+    dia, off = df[df["in_domain"]], df[~df["in_domain"]]
+    n_ds = df["train"].nunique()
+    return [
+        f"for the honest cross-dataset numbers, over {n_ds} datasets "
+        f"({len(off)} ordered pairs):",
+        f"in-domain ROC-AUC {dia['roc_auc'].mean():.3f} vs cross-domain "
+        f"{off['roc_auc'].mean():.3f} against a chance baseline of 0.500",
+        f"(cross-domain MCC {off['mcc'].mean():+.3f}, chance 0.000).",
+    ]
 
 
 # ── 7. memory ─────────────────────────────────────────────────────────────────
@@ -294,48 +322,66 @@ def bench_memory():
     import psutil
     out(f"  benchmark process RSS  : {psutil.Process().memory_info().rss/1e6:.1f} MB "
         f"(harness — imports pandas/xgboost; NOT the daemon)")
-    out(f"  edge runtime deps      : onnxruntime + numpy (+ scapy for live sniff)")
-    out(f"  MCU C model RAM        : ~130 bytes stack, 0 heap")
+    out("  edge runtime deps      : onnxruntime + numpy (+ scapy for live sniff)")
+    out("  MCU C model RAM        : ~130 bytes stack, 0 heap")
     return rss
 
 
-# ── 8. Pi projection ──────────────────────────────────────────────────────────
-def bench_pi(lat_rows, c_ns, extract):
-    section("8. RASPBERRY PI 4 PROJECTION (host x %.0f)" % PI_FACTOR)
-    single_us = lat_rows[0][1] * 1000
-    host_cpu = "Apple M4"
-    try:
-        host_cpu = subprocess.check_output(
-            ["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip()
-    except Exception:
-        host_cpu = platform.processor() or platform.machine()
-    out(f"  host                   : {host_cpu} ({platform.machine()})")
-    out(f"  ONNX single-flow (Pi)  : ~{single_us*PI_FACTOR:.1f} us/flow "
-        f"(~{1e6/(single_us*PI_FACTOR):,.0f} flows/s)")
-    if c_ns:
-        out(f"  C model (Pi)           : ~{c_ns*PI_FACTOR/1000:.2f} us/flow "
-            f"(~{1e9/(c_ns*PI_FACTOR):,.0f} flows/s)")
-    if extract:
-        npk, nfl, tp = extract
-        out(f"  feature extraction (Pi): ~{npk/tp/PI_FACTOR:,.0f} packets/s "
-            f"(the real bottleneck on a live link)")
-    out("  verdict                : easily real-time on a Pi 4 for home/IIoT "
-        "link rates; sniffing/aggregation, not inference, is the limit.")
+# ── 8. target identity ────────────────────────────────────────────────────────
+def bench_target_gate():
+    section("8. TARGET-HARDWARE ACCEPTANCE GATE")
+    out(f"  measured host          : {platform.platform()}")
+    out("  Raspberry Pi result    : NOT MEASURED")
+    out("  projection             : intentionally omitted; host scaling is not evidence")
+    out("  acceptance gate        : run this benchmark on the target Pi and retain "
+        "the identity, hashes, raw output and soak record in deploy/PI_ACCEPTANCE.md")
+
+
+def _pi_model():
+    """Return the hardware model only when Linux identifies a Raspberry Pi.
+
+    Architecture alone is insufficient: ARM Linux also includes cloud VMs,
+    servers and other SBCs whose measurements must not be published as Pi data.
+    """
+    if platform.system() != "Linux":
+        return None
+    for path in ("/proc/device-tree/model", "/sys/firmware/devicetree/base/model"):
+        try:
+            model = open(path, "rb").read().decode("utf-8", "replace").strip("\x00\n ")
+        except OSError:
+            continue
+        if "Raspberry Pi" in model:
+            return model
+    return None
 
 
 def _is_pi():
-    return platform.machine().lower() in ("aarch64", "armv7l", "armv6l") and \
-        platform.system() == "Linux"
+    return _pi_model() is not None
+
+
+FAILED_SECTIONS = []
 
 
 def _guard(fn, *a):
-    """Run a benchmark section; skip (don't abort) if an optional dep is missing."""
+    """Run a benchmark section.
+
+    A missing *optional dependency* is a legitimate skip: the section cannot
+    run on this host and nothing is wrong with the code. Anything else is a
+    bug, and used to be swallowed by the same "(section skipped — ...)" line —
+    which is how a `ValueError: too many values to unpack`, caused by
+    `read_pcap` gaining a third return value, shipped into a published
+    BENCHMARK.md as a skipped section for a full day (vault/Findings/F22).
+
+    Real failures are now recorded and reported, and `main()` exits non-zero,
+    so the benchmark cannot quietly publish a report with a hole in it.
+    """
     try:
         return fn(*a)
     except ImportError as e:
         out(f"  (section skipped — missing dependency: {e.name or e})")
     except Exception as e:
-        out(f"  (section skipped — {type(e).__name__}: {e})")
+        out(f"  (section FAILED — {type(e).__name__}: {e})")
+        FAILED_SECTIONS.append(f"{fn.__name__}: {type(e).__name__}: {e}")
     return None
 
 
@@ -345,21 +391,28 @@ def main():
     out(f"python={platform.python_version()}  time={time.strftime('%Y-%m-%d %H:%M')}")
     meta, sizes, n_trees, n_nodes = bench_params()
     lat = bench_latency(meta["n_features"])
-    c_ns = _guard(bench_c, meta["n_features"])
-    extract = _guard(bench_extract)
+    _guard(bench_c, meta["n_features"])
+    _guard(bench_extract)
     _guard(bench_e2e)
     _guard(bench_accuracy)
     _guard(bench_memory)
     if _is_pi():
         section("8. HOST IS A RASPBERRY PI — numbers above are REAL, not projected")
+        out(f"  hardware               : {_pi_model()}")
         out("  These are measured on the Pi itself; no scaling applied.")
     else:
-        bench_pi(lat, c_ns, extract)
+        bench_target_gate()
 
     with open(os.path.join(RESULTS, "BENCHMARK.md"), "w") as f:
         f.write("# IoT-IDS system benchmark\n\n```\n" + "\n".join(REPORT) + "\n```\n")
     _guard(_latency_chart, lat)
     out(f"\nwrote {os.path.join(RESULTS, 'BENCHMARK.md')}")
+    if FAILED_SECTIONS:
+        print("\n[ERROR] benchmark sections failed — the report above is "
+              "incomplete:", file=sys.stderr)
+        for s in FAILED_SECTIONS:
+            print(f"  - {s}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _latency_chart(lat):

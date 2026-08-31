@@ -1,0 +1,25 @@
+# Lint configuration for IoT-IDS.
+#
+# Scope is deliberately narrow: the `F` (pyflakes) rules catch real defects —
+# undefined names, unused imports, dead assignments — rather than style. That
+# is not hypothetical here: `F821 Undefined name 'orig_len'` in
+# demo/benchmark.py was a live crash that a catch-all `except` had been
+# rendering as a skipped benchmark section (vault/Findings/F22).
+#
+# Style rules are left off on purpose. The codebase has a consistent hand-laid
+# format with aligned comment columns that an autoformatter would flatten, and
+# churning it would bury real changes in diff noise.
+
+line-length = 100
+
+# legacy/ is a frozen historical record (see legacy/README.md). Linting it
+# would only pressure someone into editing artifacts whose whole value is that
+# they still show what was originally run.
+exclude = ["legacy"]
+
+[lint]
+select = ["F"]
+
+[format]
+# not used in CI — see above
+quote-style = "preserve"

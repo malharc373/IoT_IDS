@@ -1,0 +1,5 @@
+# GitHub Actions Ubuntu test/lint environment.
+-r requirements-linux-x86_64.txt
+pytest>=8,<10
+ruff>=0.8,<1
+pip-tools>=7.6,<8

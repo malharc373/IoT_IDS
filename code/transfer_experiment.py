@@ -3,20 +3,33 @@ transfer_experiment.py — can a *deployable* feature transform close the
 cross-dataset generalization gap?
 
 Baseline (StandardScaler on the raw 12 features) gave leave-one-dataset-out
-(LODO) transfer far below in-domain. Network-flow features are heavy-tailed and
-reported in different units across datasets, so a scaler fit on one domain does
-not match another. We test fixed transforms that are all exportable to ONNX/C
+(LODO) transfer far below in-domain. Network-flow features are heavy-tailed, so
+a scaler fit on one domain does not match another. We test fixed transforms
 (fit on the training pool, applied unchanged at inference):
 
   raw_standard      StandardScaler on raw 12                (baseline)
-  log_standard      log1p(|x|)·sign then StandardScaler
-  log_robust        log1p then RobustScaler (median/IQR)
+  log_standard      signed log1p then StandardScaler
+  log_robust        signed log1p then RobustScaler (median/IQR)
   ratios_standard   7 dimensionless ratio features only
-  ratios_log        ratios + log1p(raw 12), StandardScaler   (combined)
+  ratios_log        ratios + signed log1p(raw 12), StandardScaler  (combined)
+  quantile          QuantileTransformer -> normal
+  log_quantile      signed log1p then QuantileTransformer -> normal
+
+Exportability: the scaler-based transforms (raw/log/ratio + Standard/Robust)
+are affine and export cleanly to ONNX and to the C header. The two
+QuantileTransformer variants are ONNX-exportable but carry a 1000-knot lookup
+per feature, which is not realistic for the MCU path — they are included as a
+research upper bound, not as a deployable option.
 
 Protocol: leave-one-dataset-out. Train on all-but-one, test on the held-out
-dataset; average binary F1 / recall / benign-FPR across held-outs. No random
-split of a merged corpus.
+dataset; average every metric across held-outs. No random split of a merged
+corpus. Metrics follow vault/Findings/F02: threshold-free AUC/AP are primary,
+and any F1 is reported against the trivial all-attack baseline.
+
+NaN handling: features a dataset structurally cannot supply arrive as NaN and
+are kept as NaN all the way to XGBoost, which learns a default split direction
+for them. Zero-filling would turn "absent" into a constant that identifies the
+source dataset (vault/Findings/F12).
 
 Output: demo/results/transfer_comparison.csv
 """
@@ -26,11 +39,15 @@ import os
 import sys
 import argparse
 import warnings
+import collections
 import numpy as np
 import pandas as pd
 
 from sklearn.preprocessing import StandardScaler, RobustScaler, QuantileTransformer
-from sklearn.metrics import f1_score, recall_score
+from sklearn.metrics import (
+    f1_score, recall_score, roc_auc_score, average_precision_score,
+    matthews_corrcoef, balanced_accuracy_score,
+)
 from xgboost import XGBClassifier
 
 warnings.filterwarnings("ignore")
@@ -38,7 +55,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import multidataset as md  # noqa: E402
-from cross_dataset_eval import balanced  # noqa: E402
+from cross_dataset_eval import balanced, trivial_f1  # noqa: E402
 
 RESULTS = os.path.join(ROOT, "demo", "results")
 RS = 42
@@ -70,7 +87,9 @@ def ratio_features(X):
         (mx - mn) / (mean + eps),            # packet-length spread
         std / (mean + eps),                  # packet-length coeff. of variation
     ])
-    return np.nan_to_num(out, nan=0.0, posinf=0.0, neginf=0.0)
+    # inf is a division artifact and is not meaningful; NaN means "absent"
+    # and is preserved for XGBoost to handle natively (see F12).
+    return np.where(np.isinf(out), np.nan, out)
 
 
 TRANSFORMS = ["raw_standard", "log_standard", "log_robust",
@@ -78,8 +97,14 @@ TRANSFORMS = ["raw_standard", "log_standard", "log_robust",
 
 
 def make_features(name, Xraw, fitted=None):
-    """Return (features, fitted_state). fitted_state is reused for test."""
-    X = np.nan_to_num(Xraw.astype(np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+    """Return (features, fitted_state). fitted_state is reused for test.
+
+    NaN is preserved throughout: signed_log, StandardScaler, RobustScaler and
+    QuantileTransformer all disregard NaN when fitting and maintain it when
+    transforming, and XGBoost consumes it natively.
+    """
+    X = Xraw.astype(np.float64)
+    X = np.where(np.isinf(X), np.nan, X)
     if name == "raw_standard":
         base = X
     elif name == "log_standard":
@@ -110,8 +135,15 @@ def make_features(name, Xraw, fitted=None):
 
 
 def lodo(data, transform):
+    """Leave-one-dataset-out. Returns the mean of every metric across held-outs.
+
+    Reported threshold-free (AUC, AP) as well as thresholded (F1, MCC,
+    balanced accuracy) — under domain shift a transform can improve the
+    *ranking* without moving F1, or move F1 purely by shifting the operating
+    point. See vault/Findings/F02.
+    """
     names = list(data)
-    f1s, recs, fprs = [], [], []
+    acc = collections.defaultdict(list)
     for held in names:
         train = pd.concat([data[n] for n in names if n != held], ignore_index=True)
         Xtr, st = make_features(transform, train[F].values)
@@ -120,12 +152,30 @@ def lodo(data, transform):
                             random_state=RS, n_jobs=-1)
         clf.fit(Xtr, train.y.values)
         Xte, _ = make_features(transform, data[held][F].values, fitted=st)
-        p = clf.predict(Xte); y = data[held].y.values
-        f1s.append(f1_score(y, p, zero_division=0))
-        recs.append(recall_score(y, p, zero_division=0))
+        p = clf.predict(Xte)
+        y = data[held].y.values
+        both = len(np.unique(y)) > 1
+        prob = clf.predict_proba(Xte)[:, 1]
+
+        acc["f1"].append(f1_score(y, p, zero_division=0))
+        acc["f1_trivial"].append(trivial_f1(y))
+        acc["recall"].append(recall_score(y, p, zero_division=0))
+        acc["roc_auc"].append(roc_auc_score(y, prob) if both else np.nan)
+        acc["ap"].append(average_precision_score(y, prob) if both else np.nan)
+        acc["mcc"].append(matthews_corrcoef(y, p) if both else np.nan)
+        acc["bal_acc"].append(balanced_accuracy_score(y, p) if both else np.nan)
         neg = y == 0
-        fprs.append(float((p[neg] == 1).mean()) if neg.any() else np.nan)
-    return np.mean(f1s), np.mean(recs), np.nanmean(fprs)
+        acc["benign_fpr"].append(float((p[neg] == 1).mean()) if neg.any() else np.nan)
+    out = {k: float(np.nanmean(v)) for k, v in acc.items()}
+    out["f1_lift"] = out["f1"] - out["f1_trivial"]
+    # LODO averages a handful of folds whose difficulty varies enormously, so a
+    # bare mean hides whether a "lift" is a real effect or one lucky held-out
+    # dataset. Report the spread and the worst fold alongside it.
+    out["roc_auc_std"] = float(np.nanstd(acc["roc_auc"]))
+    out["roc_auc_min"] = float(np.nanmin(acc["roc_auc"]))
+    out["n_folds_above_chance"] = int(sum(1 for v in acc["roc_auc"] if v > 0.55))
+    out["n_folds"] = len(acc["roc_auc"])
+    return out
 
 
 def main():
@@ -144,19 +194,39 @@ def main():
     print(f"  {len(data)} datasets, {sum(len(d) for d in data.values()):,} rows\n")
 
     rows = []
-    print(f"{'transform':<18}{'LODO F1':>9}{'recall':>9}{'benign FPR':>12}")
+    print(f"{'transform':<18}{'AUC':>8}{'±sd':>7}{'worst':>7}{'>chance':>9}"
+          f"{'MCC':>8}{'F1':>8}{'lift':>8}")
+    print("-" * 74)
     for t in TRANSFORMS:
-        f1, rec, fpr = lodo(data, t)
-        rows.append({"transform": t, "lodo_f1": round(f1, 4),
-                     "recall": round(rec, 4), "benign_fpr": round(fpr, 4)})
-        print(f"{t:<18}{f1:>9.3f}{rec:>9.3f}{fpr:>12.3f}")
-    dfres = pd.DataFrame(rows).sort_values("lodo_f1", ascending=False)
+        m = lodo(data, t)
+        rows.append({"transform": t, **{k: round(v, 4) if isinstance(v, float) else v
+                                        for k, v in m.items()}})
+        print(f"{t:<18}{m['roc_auc']:>8.3f}{m['roc_auc_std']:>7.3f}"
+              f"{m['roc_auc_min']:>7.3f}"
+              f"{m['n_folds_above_chance']:>6}/{m['n_folds']:<2}"
+              f"{m['mcc']:>8.3f}{m['f1']:>8.3f}{m['f1_lift']:>+8.3f}")
+    dfres = pd.DataFrame(rows).sort_values("roc_auc", ascending=False)
     dfres.to_csv(os.path.join(RESULTS, "transfer_comparison.csv"), index=False)
+
     best = dfres.iloc[0]
     base = dfres[dfres["transform"] == "raw_standard"].iloc[0]
-    print(f"\nbest: {best['transform']} (F1={best['lodo_f1']}) vs "
-          f"baseline raw_standard (F1={base['lodo_f1']})  "
-          f"lift={best['lodo_f1']-base['lodo_f1']:+.3f}")
+    print("-" * 74)
+    print("\nRanked by ROC-AUC (threshold-free). Chance = 0.500, MCC chance = 0.000.")
+    lift = best["roc_auc"] - base["roc_auc"]
+    print(f"best: {best['transform']} AUC={best['roc_auc']:.3f} "
+          f"(sd {best['roc_auc_std']:.3f} across {int(best['n_folds'])} folds, "
+          f"worst fold {best['roc_auc_min']:.3f}) "
+          f"vs baseline raw_standard AUC={base['roc_auc']:.3f} (lift {lift:+.3f})")
+    if lift < best["roc_auc_std"]:
+        print("NOTE: the lift is smaller than the fold-to-fold spread — it is "
+              "not distinguishable from which datasets happen to be held out.")
+    if best["n_folds_above_chance"] <= best["n_folds"] // 2:
+        print(f"NOTE: only {int(best['n_folds_above_chance'])} of "
+              f"{int(best['n_folds'])} held-out folds clear AUC 0.55, so the "
+              f"mean is carried by a minority of easy targets.")
+    if best["f1_lift"] <= 0:
+        print("WARNING: the best transform's F1 is at or below the trivial "
+              "all-attack baseline — treat any F1-based claim as degenerate.")
     print(f"wrote {os.path.join(RESULTS, 'transfer_comparison.csv')}")
 
 

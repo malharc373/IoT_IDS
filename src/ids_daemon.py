@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ids_daemon.py — real-time IoT Intrusion Detection daemon.
+ids_daemon.py — streaming IoT Intrusion Detection daemon.
 
 One detection core, three feeding modes:
 
@@ -17,7 +17,8 @@ One detection core, three feeding modes:
 Alerts are aggregated per (source, attack-type): a port scan that touches 500
 ports becomes ONE "portscan from X — 500 ports" alert, not 500 lines — the way
 a real sensor reports.  Runtime deps: onnxruntime + numpy (+ scapy for --iface).
-The ONNX model has the scaler baked in, so nothing else is needed on the edge.
+The ONNX model consumes raw features directly, so no preprocessing artifact is
+needed on the edge.
 """
 from __future__ import annotations
 
@@ -36,6 +37,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 from flow_features import (  # noqa: E402
     FlowTable, parse_raw, normalize_scapy, read_pcap, FEATURE_NAMES,
+    FEATURE_CONTRACT_VERSION,
 )
 
 MODELS = os.path.join(ROOT, "models")
@@ -60,14 +62,28 @@ class Detector:
         if not os.path.exists(model_path):
             sys.exit(f"[ERROR] model not found: {model_path}\n"
                      f"        Run: python src/train_live_model.py")
-        self.sess = rt.InferenceSession(model_path)
-        self.input_name = self.sess.get_inputs()[0].name
         with open(meta_path) as f:
             self.meta = json.load(f)
+        self._validate_meta(self.meta)
+        self.sess = rt.InferenceSession(model_path)
+        self.input_name = self.sess.get_inputs()[0].name
         self.labels = {int(k): v for k, v in self.meta["labels"].items()}
         self.categories = self.meta.get("categories", {})
         CATEGORIES.update(self.categories)
-        assert self.meta["features"] == FEATURE_NAMES, "feature order mismatch!"
+
+    @staticmethod
+    def _validate_meta(meta):
+        if meta.get("purpose") != "live_multiclass_ids" or not meta.get(
+                "runtime_compatible", False):
+            raise ValueError(
+                "model metadata is not for the live 22-feature IDS; the SFAF "
+                "12-feature binary model is a research artifact, not a daemon model")
+        if meta.get("features") != FEATURE_NAMES:
+            raise ValueError("feature order mismatch: retrain the live model")
+        if meta.get("feature_contract_version") != FEATURE_CONTRACT_VERSION:
+            raise ValueError(
+                "feature semantics mismatch: retrain the model with the current "
+                "src/flow_features.py")
 
     def classify(self, vectors):
         if not vectors:
@@ -81,6 +97,78 @@ class Detector:
             conf = float(probs[i][lab]) if probs is not None else 1.0
             res.append((self.labels.get(int(lab), str(lab)), conf))
         return res
+
+
+class VerdictCache:
+    """Remembers each flow's last verdict so a flush only scores what changed.
+
+    The live loop used to re-run ONNX over every flow in the table on every
+    flush (default 2 s) until the 120 s idle eviction — so the same port scan
+    was re-classified ~60 times, and per-flush cost tracked table size rather
+    than new traffic (vault/Findings/F04).
+
+    Aggregation still needs a verdict for *every* windowed flow, not just the
+    changed ones, or an incident's flow count would reset each flush. So the
+    cache returns cached verdicts for clean flows and scores only dirty ones.
+    """
+
+    def __init__(self, detector):
+        self.det = detector
+        self.verdicts = {}          # flow key -> (kind, confidence)
+        self.scored = 0             # flows actually run through the model
+        self.reused = 0             # flows served from cache
+
+    def classify_rows(self, rows):
+        """rows: list of (key, meta, vector, needs_scoring) from extract_live.
+
+        Returns (metas, results) aligned, exactly as if everything was scored.
+        """
+        todo = [(i, r) for i, r in enumerate(rows)
+                if r[3] or r[0] not in self.verdicts]
+        if todo:
+            fresh = self.det.classify([r[2] for _, r in todo])
+            for (i, r), verdict in zip(todo, fresh):
+                self.verdicts[r[0]] = verdict
+        self.scored += len(todo)
+        self.reused += len(rows) - len(todo)
+        metas = [r[1] for r in rows]
+        results = [self.verdicts[r[0]] for r in rows]
+        return metas, results
+
+    def forget(self, keys):
+        for k in keys:
+            self.verdicts.pop(k, None)
+
+    def stats(self):
+        tot = self.scored + self.reused
+        pct = (self.reused / tot * 100) if tot else 0.0
+        return f"scored={self.scored:,} reused={self.reused:,} ({pct:.0f}% cached)"
+
+
+class IncidentWatermarks:
+    """Suppress duplicate alerts without retaining stale incidents forever.
+
+    State exists only for incident keys present in the current flow window. Once
+    a source/type disappears, a later incident is new and must alert again even
+    if it has fewer flows than the months-old incident it happens to resemble.
+    """
+
+    def __init__(self, growth=1.5):
+        self.growth = growth
+        self.counts = {}
+
+    def should_emit(self, key, flows):
+        previous = self.counts.get(key)
+        if previous is None or flows >= previous * self.growth:
+            self.counts[key] = flows
+            return True
+        return False
+
+    def retain(self, active_keys):
+        active = set(active_keys)
+        for key in list(self.counts):
+            if key not in active:
+                del self.counts[key]
 
 
 def aggregate(metas, results):
@@ -123,13 +211,112 @@ def fmt_incident(a):
             f"{a['n_dst_ips']:>3} dst-ips  {a['pkts']:>6} pkts  {conf}")
 
 
+class SyslogSink:
+    """Emit incidents to a SIEM over syslog, as CEF or JSON.
+
+    A sensor that only writes a local JSONL file cannot participate in anything
+    larger than itself. CEF (ArcSight Common Event Format) is the widest-support
+    option — Splunk, QRadar, Sentinel and Elastic all parse it — and RFC 5424
+    syslog over UDP needs no dependency beyond the stdlib, which keeps the Pi
+    runtime as it is.
+
+    Delivery is best-effort by design: a SIEM that is down or unreachable must
+    never take the sensor with it, so send failures are counted and reported,
+    not raised.
+    """
+
+    # coarse category -> CEF severity (0-10)
+    SEVERITY = {"recon": 3, "bruteforce": 5, "dos": 7, "botnet": 8, "attack": 5}
+    FACILITY = 13          # log audit
+    PRIORITY = FACILITY * 8 + 4      # facility * 8 + severity(warning)
+
+    def __init__(self, target, fmt="cef", product="IoT-IDS", vendor="IoT-IDS",
+                 version="1.0"):
+        import socket as _socket
+        host, _, port = target.partition(":")
+        self.addr = (host, int(port) if port else 514)
+        self.fmt = fmt
+        self.product, self.vendor, self.version = product, vendor, version
+        self.sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+        self.host = _socket.gethostname()
+        self.sent = 0
+        self.failed = 0
+
+    @staticmethod
+    def _esc(v):
+        """CEF extension values escape backslash and equals."""
+        return str(v).replace("\\", "\\\\").replace("=", "\\=")
+
+    def _cef(self, a, category):
+        sev = self.SEVERITY.get(category, 5)
+        ext = " ".join(f"{k}={self._esc(v)}" for k, v in (
+            ("src", a["src_ip"]),
+            ("proto", PROTO_NAME.get(a["proto"], a["proto"])),
+            ("cnt", a["flows"]),
+            ("cs1Label", "dstPorts"), ("cs1", a["n_dst_ports"]),
+            ("cs2Label", "dstIps"), ("cs2", a["n_dst_ips"]),
+            ("cn1Label", "packets"), ("cn1", a["pkts"]),
+            ("cn2Label", "bytes"), ("cn2", a["bytes"]),
+            ("cfp1Label", "confidence"), ("cfp1", round(a["avg_conf"], 4)),
+        ))
+        # CEF header pipes must be escaped; our fields never contain one
+        return (f"CEF:0|{self.vendor}|{self.product}|{self.version}|"
+                f"{a['kind']}|{category}/{a['kind']}|{sev}|{ext}")
+
+    def emit(self, a, category="attack"):
+        ts = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+        if self.fmt == "cef":
+            body = self._cef(a, category)
+        else:
+            body = json.dumps({"ts": ts, "category": category, **{
+                k: v for k, v in a.items()}})
+        msg = f"<{self.PRIORITY}>1 {ts} {self.host} {self.product} - - - {body}"
+        try:
+            self.sock.sendto(msg.encode("utf-8", "replace")[:65000], self.addr)
+            self.sent += 1
+        except Exception:
+            # a dead SIEM must not take the sensor down with it
+            self.failed += 1
+
+    def status(self):
+        return (f"syslog {self.addr[0]}:{self.addr[1]} fmt={self.fmt} "
+                f"sent={self.sent} failed={self.failed}")
+
+
 class AlertLog:
-    def __init__(self, path):
+    """Append-only JSONL alert feed with size-based rotation.
+
+    The feed had no bound: a long-running sensor grew logs/alerts.jsonl
+    forever, and the dashboard re-parsed the whole thing on every 2 s poll from
+    every client (vault/Findings/F10). Rotation keeps both costs bounded, and
+    the dashboard detects the rotation and re-reads cleanly.
+    """
+
+    def __init__(self, path, max_bytes=32 * 1024 * 1024, backups=3, sinks=None):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         self.path = path
+        self.max_bytes = max_bytes
+        self.backups = backups
         self.fh = open(path, "a")
         self.n = 0
         self.by_kind = collections.Counter()
+        self.sinks = list(sinks or [])      # e.g. SyslogSink, fanned out to
+
+    def _rotate_if_needed(self):
+        if self.max_bytes <= 0:
+            return
+        try:
+            if self.fh.tell() < self.max_bytes:
+                return
+        except Exception:
+            return
+        self.fh.close()
+        for i in range(self.backups - 1, 0, -1):
+            src, dst = f"{self.path}.{i}", f"{self.path}.{i+1}"
+            if os.path.exists(src):
+                os.replace(src, dst)
+        os.replace(self.path, f"{self.path}.1")
+        self.fh = open(self.path, "a")
 
     def emit(self, a):
         self.n += 1
@@ -140,6 +327,9 @@ class AlertLog:
                "dst_ips": a["n_dst_ips"], "dst_ports": a["n_dst_ports"],
                "confidence": round(a["avg_conf"], 4)}
         self.fh.write(json.dumps(rec) + "\n"); self.fh.flush()
+        for sink in self.sinks:
+            sink.emit(a, CATEGORIES.get(a["kind"], "attack"))
+        self._rotate_if_needed()
 
     def close(self):
         self.fh.close()
@@ -170,8 +360,8 @@ def run_offline(pcap_path, det, alog, csv_out=None):
     print(CYA(f"\n[*] Offline analysis: {pcap_path}"))
     table = FlowTable()
     n_pkts = 0
-    for ts, raw in read_pcap(pcap_path):
-        pk = parse_raw(raw)
+    for ts, raw, orig_len in read_pcap(pcap_path):
+        pk = parse_raw(raw, orig_len)
         if pk is not None:
             table.add_packet(pk, ts); n_pkts += 1
     flows = table.extract(min_pkts=1, window=None)
@@ -208,32 +398,33 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
         print("[WARN] empty pcap"); return []
     t0 = packets[0][0]
     table = FlowTable()
-    seen = {}          # (src,kind) -> last flow count alerted
+    cache = VerdictCache(det)
+    watermarks = IncidentWatermarks()
     next_ckpt = t0 + step
     n_pkts = 0
 
     def flush(now):
-        flows = table.extract(min_pkts=1, window=window)
-        metas = [m for m, _ in flows]
-        results = det.classify([v for _, v in flows])
+        rows = table.extract_live(min_pkts=1, window=window)
+        metas, results = cache.classify_rows(rows)
+        active = set()
         for a in sorted(aggregate(metas, results), key=lambda x: -x["flows"]):
             if a["avg_conf"] < min_conf:
                 continue
             key = (a["src_ip"], a["kind"])
-            prev = seen.get(key, 0)
+            active.add(key)
             # alert on first sight or when the incident grows materially
-            if a["flows"] >= prev * 1.5 or prev == 0:
-                seen[key] = a["flows"]
+            if watermarks.should_emit(key, a["flows"]):
                 rel = now - t0
                 print(f"  {DIM(f'[t+{rel:6.1f}s]')}{fmt_incident(a)}")
                 alog.emit(a)
                 if responder is not None:
                     responder.handle(a["src_ip"], a["kind"], a["avg_conf"])
+        watermarks.retain(active)
         if responder is not None:
             responder.expire()
 
-    for ts, raw in packets:
-        pk = parse_raw(raw)
+    for ts, raw, orig_len in packets:
+        pk = parse_raw(raw, orig_len)
         if pk is not None:
             table.add_packet(pk, ts); n_pkts += 1
         if ts >= next_ckpt:
@@ -248,6 +439,7 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
     n_benign = sum(1 for k, _ in results if k == "benign")
     incidents = aggregate([m for m, _ in flows], results)
     _summary(len(flows), n_benign, incidents, alog, n_pkts, 0)
+    print(DIM(f"  [cache] {cache.stats()}"))
     return incidents
 
 
@@ -262,37 +454,49 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
     print(CYA(f"\n[*] Live IDS on {iface}  (Ctrl-C to stop)"))
     print(DIM(f"    window={window}s flush={flush_s}s model=live_ids.onnx"))
     table = FlowTable()
-    seen = {}
-    stats = {"pkts": 0}
+    cache = VerdictCache(det)
+    watermarks = IncidentWatermarks()
+    stats = {"pkts": 0, "last_ts": time.time()}
 
     def on_pkt(p):
         pk = normalize_scapy(p)
-        if pk is not None:
-            table.add_packet(pk, time.time()); stats["pkts"] += 1
+        if pk is None:
+            return
+        # Use the CAPTURE timestamp, not the time this callback happened to run.
+        # Under burst load the callback lags the wire by a variable amount, which
+        # distorts every inter-arrival feature relative to training — where pcap
+        # timestamps are used (vault/Findings/F05).
+        ts = float(getattr(p, "time", 0.0)) or time.time()
+        table.add_packet(pk, ts)
+        stats["pkts"] += 1
+        if ts > stats["last_ts"]:
+            stats["last_ts"] = ts
 
     sniffer = AsyncSniffer(iface=iface, prn=on_pkt, store=False)
     sniffer.start()
     try:
         while True:
             time.sleep(flush_s)
-            now = time.time()
-            flows = table.extract(min_pkts=1, window=window)
-            metas = [m for m, _ in flows]
-            results = det.classify([v for _, v in flows])
+            now = stats["last_ts"]
+            rows = table.extract_live(min_pkts=1, window=window)
+            metas, results = cache.classify_rows(rows)
+            active = set()
             for a in sorted(aggregate(metas, results), key=lambda x: -x["flows"]):
                 if a["avg_conf"] < min_conf:
                     continue
                 key = (a["src_ip"], a["kind"])
-                if a["flows"] >= seen.get(key, 0) * 1.5 or key not in seen:
-                    seen[key] = a["flows"]
+                active.add(key)
+                if watermarks.should_emit(key, a["flows"]):
                     print(fmt_incident(a)); alog.emit(a)
                     if responder is not None:
                         responder.handle(a["src_ip"], a["kind"], a["avg_conf"])
+            watermarks.retain(active)
             if responder is not None:
                 responder.expire()
-            table.prune(older_than=idle_evict, now=now)
+            cache.forget(table.prune(older_than=idle_evict, now=now))
             print(DIM(f"  [{dt.datetime.now():%H:%M:%S}] pkts={stats['pkts']:,} "
-                      f"flows={len(table.flows):,} incidents={alog.n}"), end="\r")
+                      f"flows={len(table):,} incidents={alog.n} "
+                      f"| {cache.stats()}"), end="\r")
     except KeyboardInterrupt:
         print(CYA("\n[*] stopping..."))
     finally:
@@ -302,10 +506,11 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
         n_benign = sum(1 for k, _ in results if k == "benign")
         incidents = aggregate([m for m, _ in flows], results)
         _summary(len(flows), n_benign, incidents, alog, stats["pkts"], 0)
+        print(DIM(f"  [cache] {cache.stats()}"))
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Real-time IoT IDS daemon")
+    ap = argparse.ArgumentParser(description="Streaming IoT IDS daemon")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--pcap", help="offline: classify a capture file")
     g.add_argument("--replay", help="offline: replay a pcap, live-style alerts")
@@ -313,6 +518,15 @@ def main():
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--meta", default=DEFAULT_META)
     ap.add_argument("--log", default=os.path.join(ROOT, "logs", "alerts.jsonl"))
+    ap.add_argument("--syslog", default=None, metavar="HOST[:PORT]",
+                    help="also send incidents to a SIEM over syslog/UDP "
+                         "(default port 514)")
+    ap.add_argument("--syslog-format", default="cef", choices=("cef", "json"),
+                    dest="syslog_format",
+                    help="wire format for --syslog (default cef)")
+    ap.add_argument("--log-max-mb", type=int, default=32, dest="log_max_mb",
+                    help="rotate the alert log past this size, 0 = never "
+                         "(default 32)")
     ap.add_argument("--csv", default=None, help="offline: write per-flow CSV")
     ap.add_argument("--window", type=float, default=60.0)
     ap.add_argument("--step", type=float, default=1.0, help="replay/live flush interval")
@@ -330,10 +544,28 @@ def main():
                     help="how long an IPS block lasts (default 300s)")
     ap.add_argument("--allow", action="append", default=[],
                     help="IP/CIDR the IPS must never block (repeatable)")
+    ap.add_argument("--ips-scope", default="host", choices=("host", "network"),
+                    dest="ips_scope",
+                    help="host = INPUT only (passive sensor, protects this box); "
+                         "network = INPUT+FORWARD (inline sensor, protects the "
+                         "devices behind it)")
+    ap.add_argument("--ips-strikes", type=int, default=3, dest="ips_strikes",
+                    help="corroborating incidents required before blocking "
+                         "(model confidence is uncalibrated; default 3)")
+    ap.add_argument("--ips-strike-window", type=int, default=120,
+                    dest="ips_strike_window",
+                    help="seconds over which strikes are counted (default 120)")
+    ap.add_argument("--ips-throttle-pps", type=int, default=20,
+                    dest="ips_throttle_pps",
+                    help="packets/s a throttled source is limited to (default 20)")
     args = ap.parse_args()
 
     det = Detector(args.model, args.meta)
-    alog = AlertLog(args.log)
+    sinks = []
+    if args.syslog:
+        sinks.append(SyslogSink(args.syslog, fmt=args.syslog_format))
+        print(CYA(f"[SIEM] {sinks[0].status()}"))
+    alog = AlertLog(args.log, max_bytes=args.log_max_mb * 1024 * 1024, sinks=sinks)
 
     responder = None
     if args.ips or args.prevent:
@@ -341,8 +573,12 @@ def main():
         responder = Responder(mode="enforce" if args.prevent else "dry-run",
                               min_conf=args.ips_min_conf,
                               block_seconds=args.block_seconds,
-                              allowlist=args.allow)
-        print(CYA(f"[IPS] {responder.status()}"))
+                              allowlist=args.allow,
+                              scope=args.ips_scope,
+                              strikes=args.ips_strikes,
+                              strike_window=args.ips_strike_window,
+                              throttle_pps=args.ips_throttle_pps)
+        print(CYA(f"[IPS] {json.dumps(responder.status())}"))
 
     try:
         if args.pcap:
@@ -357,6 +593,8 @@ def main():
                      responder=responder)
     finally:
         alog.close()
+        for sink in sinks:
+            print(DIM(f"[SIEM] {sink.status()}"))
 
 
 if __name__ == "__main__":

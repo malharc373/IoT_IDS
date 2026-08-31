@@ -31,6 +31,11 @@ secrets.*
 *.tmp
 *.log
 
+# Obsidian's live pane layout and graph zoom mutate while the app is open.
+# Keep stable vault settings versioned, but never turn UI motion into agent work.
+vault/.obsidian/workspace*.json
+vault/.obsidian/graph.json
+
 # ── Jupyter ───────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 **/.ipynb_checkpoints/
@@ -38,6 +43,7 @@ secrets.*
 # ── Datasets (too large; real dir or a symlink to an external drive) ──────────
 Datasets/
 /Datasets
+/Literature/*.pdf
 data/pcaps/
 data/processed/
 results/full_dataset.pkl
@@ -46,6 +52,7 @@ results/sample_dataset.pkl
 # ── Runtime output ────────────────────────────────────────────────────────────
 logs/
 demo/results/*_flows.csv
+tmp/
 
 # ── Large / regenerable model artifacts ───────────────────────────────────────
 *.pkl
@@ -54,9 +61,15 @@ models/live_ids_booster.json
 
 # ── Exceptions: tiny, deploy-critical artifacts that MUST be committed ─────────
 # (KB-scale; required to run the IDS on the edge device — keep these tracked.)
+# No .pkl is listed here on purpose: a pickle executes arbitrary code on load,
+# which is not something to ship from a security project. Everything deployable
+# is ONNX or a C header; pickles are regenerable training by-products.
 !models/live_ids.onnx
 !models/live_ids.h
 !models/live_meta.json
 !models/xgb_edge.onnx
-!models/scaler_unified_4dataset.pkl
 !models/edge_meta.json
+
+# ── Secrets generated at runtime (never commit) ───────────────────────────────
+*.token
+dashboard.token

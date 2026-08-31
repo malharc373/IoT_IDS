@@ -1,0 +1,135 @@
+{
+  "unified_features": [
+    "Flow Duration",
+    "Total Fwd Packets",
+    "Total Backward Packets",
+    "Total Length of Fwd Packets",
+    "Total Length of Bwd Packets",
+    "Flow Packets/s",
+    "Fwd Packets/s",
+    "Bwd Packets/s",
+    "Min Packet Length",
+    "Max Packet Length",
+    "Packet Length Mean",
+    "Packet Length Std"
+  ],
+  "feature_units": {
+    "Flow Duration": "s",
+    "Total Fwd Packets": "packets",
+    "Total Backward Packets": "packets",
+    "Total Length of Fwd Packets": "bytes",
+    "Total Length of Bwd Packets": "bytes",
+    "Flow Packets/s": "packets/s",
+    "Fwd Packets/s": "packets/s",
+    "Bwd Packets/s": "packets/s",
+    "Min Packet Length": "bytes",
+    "Max Packet Length": "bytes",
+    "Packet Length Mean": "bytes",
+    "Packet Length Std": "bytes"
+  },
+  "datasets": {
+    "cicids2017": 400000,
+    "unsw_nb15": 254066,
+    "ton_iot": 151030,
+    "bot_iot": 394642,
+    "cic_iot_2023": 400000
+  },
+  "scaler": null,
+  "baseline_cicids_only": {
+    "cicids2017": {
+      "acc": 0.9823,
+      "f1": 0.9559,
+      "f1_trivial": 0.3294,
+      "f1_lift": 0.6265,
+      "auc": 0.9984,
+      "mcc": 0.9451,
+      "bal_acc": 0.9789
+    },
+    "unsw_nb15": {
+      "acc": 0.3506,
+      "f1": 0.0009,
+      "f1_trivial": 0.7863,
+      "f1_lift": -0.7854,
+      "auc": 0.4581,
+      "mcc": -0.0481,
+      "bal_acc": 0.4977
+    },
+    "ton_iot": {
+      "acc": 0.3323,
+      "f1": 0.2133,
+      "f1_trivial": 0.8591,
+      "f1_lift": -0.6458,
+      "auc": 0.7478,
+      "mcc": 0.1453,
+      "bal_acc": 0.5496
+    },
+    "bot_iot": {
+      "acc": 0.0211,
+      "f1": 0.0411,
+      "f1_trivial": 0.9999,
+      "f1_lift": -0.9588,
+      "auc": 0.5465,
+      "mcc": -0.0067,
+      "bal_acc": 0.4549
+    },
+    "cic_iot_2023": {
+      "acc": 0.1658,
+      "f1": 0.0,
+      "f1_trivial": 0.9096,
+      "f1_lift": -0.9096,
+      "auc": 0.5793,
+      "mcc": 0.0,
+      "bal_acc": 0.5
+    }
+  },
+  "unified": {
+    "cicids2017": {
+      "acc": 0.982,
+      "f1": 0.9551,
+      "f1_trivial": 0.3294,
+      "f1_lift": 0.6257,
+      "auc": 0.9982,
+      "mcc": 0.944,
+      "bal_acc": 0.9781
+    },
+    "unsw_nb15": {
+      "acc": 0.924,
+      "f1": 0.9417,
+      "f1_trivial": 0.7863,
+      "f1_lift": 0.1554,
+      "auc": 0.9833,
+      "mcc": 0.8326,
+      "bal_acc": 0.914
+    },
+    "ton_iot": {
+      "acc": 0.9939,
+      "f1": 0.996,
+      "f1_trivial": 0.8591,
+      "f1_lift": 0.1368,
+      "auc": 0.9995,
+      "mcc": 0.9836,
+      "bal_acc": 0.9898
+    },
+    "bot_iot": {
+      "acc": 1.0,
+      "f1": 1.0,
+      "f1_trivial": 0.9999,
+      "f1_lift": 0.0001,
+      "auc": 1.0,
+      "mcc": 0.9428,
+      "bal_acc": 0.9444
+    },
+    "cic_iot_2023": {
+      "acc": 0.8954,
+      "f1": 0.9368,
+      "f1_trivial": 0.9096,
+      "f1_lift": 0.0272,
+      "auc": 0.9532,
+      "mcc": 0.6351,
+      "bal_acc": 0.8279
+    }
+  },
+  "onnx_kb": 19.3,
+  "onnx_parity": 1.0,
+  "caveat": "in-domain splits are random row splits and are optimistic for CICFlowMeter corpora; see cross_dataset_eval.py for the honest transfer number"
+}

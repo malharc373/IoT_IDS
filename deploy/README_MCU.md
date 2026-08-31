@@ -7,7 +7,7 @@ dependency-free C header, `models/live_ids.h`:
 python src/export_c.py --verify   # regenerate + check 100% parity vs XGBoost
 ```
 
-Footprint: ~42 KB of `const` tree data in flash, ~130 bytes of RAM at inference,
+Footprint: ~43 KB of `const` tree data in flash, ~130 bytes of RAM at inference,
 no libc math required. Fits comfortably on an ESP32 (4 MB flash / 520 KB RAM);
 too large for tiny AVR Arduinos (train a smaller model for those — fewer
 estimators / lower depth in `src/train_live_model.py`).
@@ -28,9 +28,9 @@ if (cls != 0) {
 }
 ```
 
-The scaler is baked in — pass **raw** feature values; `ids_predict` scales,
-walks every tree, and returns the arg-max class. It is pure C99 and has no
-heap allocation, so it is safe to call from an ISR-adjacent loop.
+There is no scaler — pass **raw** feature values; `ids_predict` walks every
+tree and returns the arg-max class. It is pure C99 and has no heap allocation,
+so it is safe to call from an ISR-adjacent loop.
 
 ## Notes
 

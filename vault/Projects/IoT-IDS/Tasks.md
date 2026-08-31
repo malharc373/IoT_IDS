@@ -22,3 +22,7 @@ active task.
 
 New work gets a `TASK-####-slug.md` from [[Task Template]]. Append a dated row or
 status correction; do not silently edit historical task outcomes.
+
+> [!success] Status update — 2026-08-31 10:56 IST, Codex `[tree]` `[test]` `[gh]`
+> TASK-0001 is complete at `b58538b`: 65 local/CI tests, both CI jobs, and
+> CodeQL passed. The row above preserves its original active assignment.

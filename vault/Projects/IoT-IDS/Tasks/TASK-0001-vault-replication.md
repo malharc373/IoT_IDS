@@ -1,6 +1,6 @@
 ---
 task_id: TASK-0001
-status: active
+status: complete
 priority: P1
 owner: Codex orchestrator
 created: 2026-08-31T10:20:00+05:30
@@ -34,7 +34,7 @@ database for Claude Code, Codex, and bounded subagents.
 - [x] `[complete]` Create hubs, registers, templates, prompts, and handoff structure.
 - [x] `[complete]` Add synchronized bootstrap files and subagent profiles.
 - [x] `[complete]` Validate links, parity, configuration, tests, and Git diff.
-- [ ] `[active]` Commit, push, and verify CI.
+- [x] `[complete]` Commit, push, and verify CI.
 
 ## Acceptance criteria
 
@@ -56,6 +56,17 @@ AGENTS.md vs CLAUDE.md                -> byte-identical
 78 vault files / 72 Markdown notes   -> 0 unresolved wikilinks
 pytest tests/ -q                     -> 65 passed
 ruff + compileall + Bash + diff      -> passed
+commit                               -> b58538b
+GitHub CI run 33360157963            -> passed
+CodeQL run 33360155347               -> passed
 ```
+
+## Completion
+
+All acceptance criteria are satisfied as of `b58538b`. The only red PR check
+remains the pre-existing GitGuardian historical false positive, which is tracked
+separately as TASK-0002 and was outside this task.
+
+— Codex, 2026-08-31T10:56:00+05:30 `[tree]` `[test]` `[gh]`
 
 — Codex, 2026-08-31T10:20:00+05:30

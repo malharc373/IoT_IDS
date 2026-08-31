@@ -22,3 +22,13 @@ Append dated snapshots; never rewrite prior snapshots.
 
 Record branch, HEAD, upstream relation, dirty state, active worktrees/workers,
 tests, PR/check state, hardware/dataset availability, and anything unpushed.
+
+> [!info] Snapshot — 2026-08-31 10:56 IST, Codex `[tree]` `[test]` `[gh]`
+> - Shared-agent system commit: `b58538b`, pushed to `fix/review-remediation`
+> - CI `33360157963`: macOS lock freshness and Linux full test/demo/benchmark passed
+> - CodeQL `33360155347`: passed; PR CodeQL check passed
+> - Hermetic suite: 65 passed, including the agent shared-database contract
+> - PR #1 remains mergeable; GitGuardian incident 36364668 is the sole red check
+> - Obsidian normalized its JSON settings and created a workspace layout after
+>   the vault was opened; those in-scope UI settings are preserved in the final
+>   completion-record commit.

@@ -486,8 +486,8 @@ PDF SHA-256                  -> a43c2dfd323a41be74602a430b185752323dfaa9d12d3f4e
 A fresh pass did not rely on the existing remediation verdicts. It ran the
 complete hermetic suite, Ruff, bytecode compilation, shell syntax, dependency
 audits, Bandit, current GitHub checks, and repository-control readback. The two
-runtime locks have no known vulnerabilities. Finding [[F24 - Independent
-security hardening follow-up]] records the fixes: an optimization-proof split
+runtime locks have no known vulnerabilities. Finding
+[[F24 - Independent security hardening follow-up]] records the fixes: an optimization-proof split
 gate, atomic and observable IPS state persistence, member-wise atomic archive
 extraction, and stable executable resolution. The suite now has 63 checks.
 
@@ -503,8 +503,8 @@ unsupported state is claimed.
 The branch and remote were still synchronized at `1d127ce`, and PR #1 remained
 mergeable with CI and CodeQL green. A Git index hygiene pass found one additional
 defect: a 72-byte empty Jupyter autosave under `code/.ipynb_checkpoints/` was
-still tracked despite the directory being ignored. Finding [[F25 - Tracked
-Jupyter autosave checkpoint]] records its removal and a new regression that
+still tracked despite the directory being ignored. Finding
+[[F25 - Tracked Jupyter autosave checkpoint]] records its removal and a new regression that
 rejects tracked editor and cache debris. This work does not read or alter the
 external datasets.
 
@@ -517,8 +517,8 @@ compileall + Bash syntax + diff check    -> passed
 The first CI run for this sweep (`33357756792`) then exposed an
 environment-only reproducibility fault. The macOS runner injected
 `PIP_NO_INDEX`, which `pip-compile` copied into its generated command header;
-the dependency pins were unchanged. [[F26 - Lock freshness depended on runner
-environment]] records the fix: all platform lock commands now use `--no-header`,
+the dependency pins were unchanged.
+[[F26 - Lock freshness depended on runner environment]] records the fix: all platform lock commands now use `--no-header`,
 so ambient resolver settings cannot create a header-only diff.
 
 `/Volumes/GOAT` is mounted as of this sweep, but scientific reruns remain outside

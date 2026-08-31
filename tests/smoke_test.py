@@ -1594,6 +1594,52 @@ def t_repository_governance_contract():
     assert not [p for p in tracked_lit if p.lower().endswith(".pdf")], tracked_lit
 
 
+def t_agent_shared_database_contract():
+    """Claude/Codex bootstrap and canonical vault links cannot silently drift."""
+    import pathlib, re
+
+    agents = pathlib.Path(ROOT, "AGENTS.md").read_bytes()
+    claude = pathlib.Path(ROOT, "CLAUDE.md").read_bytes()
+    assert agents == claude, "AGENTS.md and CLAUDE.md bootstrap rules drifted"
+
+    required = [
+        "vault/Agent-Protocol.md", "vault/Dashboard.md",
+        "vault/Projects/IoT-IDS/IoT-IDS.md",
+        "vault/Projects/IoT-IDS/Repo-State.md",
+        "vault/Projects/IoT-IDS/Tasks.md",
+        "vault/Projects/IoT-IDS/Open-Decisions.md",
+        ".codex/config.toml", ".codex/agents/README.md",
+    ]
+    for rel in required:
+        assert pathlib.Path(ROOT, rel).is_file(), rel
+
+    config = pathlib.Path(ROOT, ".codex/config.toml").read_text()
+    assert re.search(r"max_concurrent_threads_per_session\s*=\s*3\b", config)
+    profiles = list(pathlib.Path(ROOT, ".codex/agents").glob("*.toml"))
+    assert len(profiles) == 8, [p.name for p in profiles]
+
+    vault = pathlib.Path(ROOT, "vault")
+    notes = list(vault.rglob("*.md"))
+    by_stem = {}
+    by_rel = {}
+    for note in notes:
+        by_stem.setdefault(note.stem, []).append(note)
+        by_rel[note.relative_to(vault).with_suffix("").as_posix()] = note
+    broken = []
+    for note in notes:
+        text = re.sub(r"```.*?```", "", note.read_text(errors="replace"), flags=re.S)
+        for raw in re.findall(r"\[\[([^\]\n]+)\]\]", text):
+            target = raw.split("|", 1)[0].split("#", 1)[0].strip()
+            if not target:
+                continue
+            stem = target[:-3] if target.endswith(".md") else target
+            name = pathlib.PurePosixPath(stem).name
+            if target.startswith("../") or not (
+                    stem in by_rel or len(by_stem.get(name, [])) == 1):
+                broken.append(f"{note.relative_to(vault)} -> {target}")
+    assert not broken, "broken vault links:\n  " + "\n  ".join(broken)
+
+
 def t_benchmark_extraction_section_runs():
     """Section 4 must actually produce numbers, not a swallowed exception.
 
@@ -1689,6 +1735,7 @@ TESTS = [
         ("no retracted numbers in live docs", t_no_retracted_numbers_in_live_docs),
         ("current claims are evidence scoped", t_current_claims_are_evidence_scoped),
         ("repository governance contract", t_repository_governance_contract),
+        ("agent shared database contract", t_agent_shared_database_contract),
         ("systemd unit sane", t_systemd_unit_sane),]
 
 

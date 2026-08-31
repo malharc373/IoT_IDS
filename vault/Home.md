@@ -6,6 +6,10 @@ created: 2026-08-19
 
 # IoT-IDS — Engineering & Research Vault
 
+> [!important] Shared-agent entry point
+> New Claude Code, Codex, and subagent sessions start at [[Dashboard]] and
+> [[Agent-Protocol]]. This note remains the historical findings index.
+
 Working knowledge base for the **IoT-IDS** B.Tech project: an edge intrusion
 detection/prevention system for IoT networks, plus the **SFAF** (Semantic
 Feature Alignment Framework) cross-dataset generalization study.
@@ -93,7 +97,7 @@ Severity-ordered. Each note states the problem, the evidence, and the fix.
 ## Current state
 
 - 26 findings: 25 fixed, 1 mitigated ([[F09 - IPS gate uses uncalibrated confidence]])
-- Test suite **64 passed / 0 failed** (was 23/1 before the first review), plus
+- Test suite **65 passed / 0 failed** (was 23/1 before the first review), plus
   `ruff` in CI and a benchmark that exits non-zero on a failed section
 - Prior off-domain run: ROC-AUC 0.509 over 110 dataset pairs, now historical.
   Its diagonal was resubstitution, so no current gap is quoted pending the

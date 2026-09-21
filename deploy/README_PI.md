@@ -4,7 +4,7 @@ End-to-end walkthrough: flash → connect → copy → install → run → demon
 Tested target: **Raspberry Pi 4 (64-bit Raspberry Pi OS)**. A Pi 3B+/Zero 2 W
 also works (inference is ~microseconds; the sniffer is the only real load).
 
-The edge model (`models/live_ids.onnx`, ~55 KB) has the feature scaler baked
+The edge model (`models/live_ids.onnx`, ~90 KB) has the feature scaler baked
 in, so the Pi only needs `onnxruntime + numpy + scapy` — no training stack.
 
 ---
@@ -61,6 +61,18 @@ This installs deps into `.venv`, smoke-tests the model, and registers two
 systemd services: **`iot-ids`** (the sensor, runs as root) and
 **`iot-ids-dashboard`** (the web UI, runs as your user). Pass a second argument
 to change the dashboard port: `sudo bash deploy/setup_pi.sh eth0 8080`.
+
+### Verify the install before you rely on it
+
+```bash
+.venv/bin/python demo/preflight.py --runtime-only --iface eth0
+```
+
+Checks the inference deps, the model artifacts, train/serve feature parity, a
+real ONNX round-trip, and that the interface exists and you have capture
+privileges. Exit code 0 = ready; anything blocking prints the fixing command.
+`data/pcaps/` and `logs/` are generated on first run and are reported as
+warnings, not errors.
 
 ## 5. Run the sensor
 

@@ -39,15 +39,8 @@ echo "--- [2/4] python venv + deps ---"
 "$PY" -m pip install --upgrade pip
 "$PY" -m pip install -r "$REPO_DIR/deploy/requirements-pi.txt"
 
-echo "--- [3/4] smoke test the model loads ---"
-"$PY" - <<PY
-import onnxruntime as rt, json, os
-m = os.path.join("$REPO_DIR", "models", "live_ids.onnx")
-assert os.path.exists(m), "models/live_ids.onnx missing — copy it from your dev machine"
-rt.InferenceSession(m)
-meta = json.load(open(os.path.join("$REPO_DIR","models","live_meta.json")))
-print("  model OK:", meta["metrics"])
-PY
+echo "--- [3/4] preflight: deps, model artifacts, feature parity, round-trip ---"
+"$PY" "$REPO_DIR/demo/preflight.py" --runtime-only --iface "$IFACE"
 
 echo "--- [4/4] systemd services ---"
 # Sensor (needs root for packet capture)

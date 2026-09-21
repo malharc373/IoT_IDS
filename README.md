@@ -52,10 +52,18 @@ Alerts read `category/type`, e.g. `⚠ ATTACK recon/portscan src=… 593 dst-por
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
+python demo/preflight.py                        # is this machine ready? (5 s)
 python attacks/build_corpus.py --scenarios 30   # synth traffic -> labeled flows
 python src/train_live_model.py                  # train + export ONNX (+ booster)
 bash demo/run_demo.sh                            # generate traffic -> detect -> validate
 ```
+
+`demo/preflight.py` checks the interpreter, dependencies, shipped model
+artifacts, train/serve feature parity and a real ONNX round-trip, then exits
+non-zero with the fixing command if anything is genuinely broken. Run it before
+a demo. The model ships in git, so the clone is already runnable — `data/pcaps/`
+and `logs/` are **generated on first run**, not committed, and preflight reports
+them as warnings rather than errors.
 
 Detect + **prevent** (dry-run IPS shows what it *would* block):
 
@@ -178,6 +186,37 @@ python code/cross_dataset_eval.py           # run the generalization study
 
 ---
 
+## Scope & limitations
+
+This project **measures and reports** the cross-dataset generalization gap; it
+does not claim to close it. That is a deliberate scope decision, stated here so
+the numbers above are not read as more than they are.
+
+**What is demonstrated.** A flow-based model that runs in real time on cheap
+hardware — ~6 µs/flow, ~90 KB, 56 MB RSS — detecting 9 attack types with
+aggregated per-source incidents and an active-response (IPS) path. On traffic
+drawn from its own distribution it is accurate (99.9% on unseen-seed synthetic
+scenarios, 0.978 in-domain F1 on real datasets).
+
+**What is not demonstrated.**
+
+| Limitation | Status |
+|---|---|
+| **Cross-domain transfer.** In-domain F1 0.978 vs cross-domain 0.450 — a 0.528 gap. A CICIDS-only model scores 0.00–0.08 on other datasets. | **Open.** Quantified, not solved. |
+| **Fixed transforms are not the answer.** A deployable log+quantile transform lifts leave-one-dataset-out transfer 0.544 → 0.594 — real, free, and far short of the 0.98 in-domain ceiling. | **Measured ceiling.** |
+| **Live-sensor accuracy is on synthetic traffic.** The 99.9% figure comes from scapy-generated scenarios, hardened with packet-size noise and attack-resembling *hard-benign* flows. Real labeled capture is the only way to claim a real-world live number. | **Not yet claimed.** |
+| **Two datasets are lossy under alignment** (MQTT-IoT-IDS2020 lacks flow duration/rate; CIC-IoT-2023 has no fwd/bwd direction); Edge-IIoTSet and N-BaIoT are excluded as incompatible feature paradigms. | Documented in `code/multidataset.py`. |
+| **Dashboard has no authentication** and binds `0.0.0.0` by default. Intended for an isolated lab LAN. | Use `--host 127.0.0.1` to restrict. |
+
+**Why report rather than close.** Closing the gap needs genuine domain
+adaptation or per-family calibration — a research programme, not a tuning pass.
+An honest 0.45 with a reproducible method is worth more than an optimistic
+merged-split accuracy that leaks across domains, which is exactly the failure
+mode this study was built to expose. The open direction is documented in
+[`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
+
+---
+
 ## Repository layout
 
 ```
@@ -196,6 +235,7 @@ demo/
   run_demo.sh          one-command end-to-end demonstration
   validate.py          held-out validation on unseen scenarios
   benchmark.py         accuracy / latency / throughput / footprint benchmark
+  preflight.py         demo-day readiness check (deps, artifacts, round-trip)
   results/             confusion matrices, cross-dataset study, benchmark reports
 deploy/
   setup_pi.sh          Pi installer: venv + iot-ids + iot-ids-dashboard services
@@ -211,6 +251,8 @@ models/
   live_ids.onnx        deployable edge model (scaler baked in, ~90 KB)
   live_ids.h           dependency-free C model for microcontrollers
   live_meta.json       feature order, labels, categories, scaler, metrics
+.github/workflows/
+  ci.yml               smoke tests + Pi-runtime-only job on every push/PR
 tests/
   smoke_test.py        24 checks over every module/script
 .env.example           optional configuration template (copy to .env)

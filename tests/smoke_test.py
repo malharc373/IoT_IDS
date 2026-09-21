@@ -24,19 +24,37 @@ sys.path.insert(0, os.path.join(ROOT, "attacks"))
 sys.path.insert(0, os.path.join(ROOT, "code"))
 os.environ.setdefault("PYTHONWARNINGS", "ignore")
 
-PASS, FAIL = [], []
+PASS, FAIL, SKIP = [], [], []
 TMP = tempfile.mkdtemp(prefix="iotids_test_")
+
+
+class Skipped(Exception):
+    """Raised by a check whose inputs are training artifacts, not shipped ones."""
+
+
+def needs_booster():
+    """models/live_ids_booster.json is a training artifact and is git-ignored,
+    so a fresh clone cannot exercise the C-export path. Skip, don't fail."""
+    if not os.path.exists(os.path.join(ROOT, "models", "live_ids_booster.json")):
+        raise Skipped("models/live_ids_booster.json absent "
+                      "(run src/train_live_model.py to exercise this)")
 
 
 def check(name, fn):
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             fn()
-        PASS.append(name)
-        print(f"  \033[32mPASS\033[0m  {name}")
-    except Exception as e:
+    except Skipped as e:
+        SKIP.append((name, str(e)))
+        print(f"  \033[33mSKIP\033[0m  {name}  -> {e}")
+    # a script under test may sys.exit() on a missing artifact; SystemExit is not
+    # an Exception, so catch it explicitly or one bad check aborts the whole run
+    except (Exception, SystemExit) as e:
         FAIL.append((name, repr(e)))
         print(f"  \033[31mFAIL\033[0m  {name}  -> {e!r}")
+    else:
+        PASS.append(name)
+        print(f"  \033[32mPASS\033[0m  {name}")
 
 
 # ── 1. imports ────────────────────────────────────────────────────────────────
@@ -149,6 +167,7 @@ def t_ips_responder():
 
 def t_c_export():
     import importlib.util, subprocess, shutil
+    needs_booster()
     spec = importlib.util.spec_from_file_location("expc", os.path.join(ROOT, "src", "export_c.py"))
     m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
     meta, df = m._load()
@@ -409,7 +428,10 @@ def main():
     for name, fn in tests:
         check(name, fn)
     shutil.rmtree(TMP, ignore_errors=True)
-    print(f"\n{'='*50}\n  {len(PASS)} passed, {len(FAIL)} failed\n{'='*50}")
+    print(f"\n{'='*50}\n  {len(PASS)} passed, {len(FAIL)} failed, "
+          f"{len(SKIP)} skipped\n{'='*50}")
+    for n, why in SKIP:
+        print(f"  SKIPPED: {n}: {why}")
     if FAIL:
         for n, e in FAIL:
             print(f"  FAILED: {n}: {e}")

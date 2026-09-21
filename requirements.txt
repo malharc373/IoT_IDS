@@ -12,6 +12,7 @@ onnxruntime>=1.17
 skl2onnx>=1.16
 onnxmltools>=1.12
 joblib>=1.3
+pyarrow>=14          # parquet engine: data/processed/flows.parquet + SFAF datasets
 scapy>=2.5
 matplotlib>=3.7
 seaborn>=0.12

@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: smoke tests (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install libpcap (scapy) and build tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y libpcap0.8 gcc
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Smoke tests (24 checks over every module/script)
+        run: python tests/smoke_test.py
+
+      - name: Preflight (demo-day readiness check)
+        run: python demo/preflight.py
+
+  pi-runtime:
+    name: Pi runtime set only (inference deps, no training stack)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: deploy/requirements-pi.txt
+
+      - name: Install libpcap (scapy)
+        run: sudo apt-get update -y && sudo apt-get install -y libpcap0.8
+
+      - name: Install the minimal Pi runtime deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r deploy/requirements-pi.txt
+
+      - name: Model loads and classifies with inference deps alone
+        run: python demo/preflight.py --runtime-only
+
+      - name: Offline detection works without the training stack
+        run: |
+          python src/ids_daemon.py --help
+          python -c "
+          import sys; sys.path.insert(0, 'src')
+          from ids_daemon import Detector
+          d = Detector()
+          print('detector loaded:', len(d.labels), 'classes')
+          "

@@ -8,7 +8,8 @@ on the named host; a non-Pi run does not invent target-hardware estimates.
 
 Sections:
   1. Model parameters      trees / nodes / features / classes / sizes
-  2. Inference latency     ONNX single-flow + batched (mean/p50/p99/throughput)
+  2. Inference latency     single-flow + batched (mean/p50/p99/throughput), via
+                           onnxruntime, or the C fallback where it is absent
   3. Native C model        compiled predict() latency (MCU path)
   4. Feature extraction    packets/s and flows/s from real pcaps
   5. End-to-end            pcap -> verdicts wall time
@@ -95,22 +96,39 @@ def bench_params():
     return meta, sizes, n_trees, n_nodes or 0
 
 
-# ── 2. ONNX inference latency ─────────────────────────────────────────────────
-def bench_latency(nf):
-    section("2. ONNX INFERENCE LATENCY & THROUGHPUT")
-    import onnxruntime as rt
+# ── 2. inference latency ─────────────────────────────────────────────────────
+def _inference_runner():
+    """The engine the daemon would use here: onnxruntime, else the C fallback."""
+    try:
+        import onnxruntime as rt
+    except ImportError:
+        from c_backend import CModel
+        model = CModel()
+        return "c", model.predict
     sess = rt.InferenceSession(os.path.join(MODELS, "live_ids.onnx"))
     name = sess.get_inputs()[0].name
+    return "onnx", lambda X: sess.run(None, {name: X})
+
+
+def bench_latency(nf):
+    backend, run = _inference_runner()
+    if backend == "onnx":
+        section("2. ONNX INFERENCE LATENCY & THROUGHPUT")
+    else:
+        section("2. C-BACKEND INFERENCE LATENCY & THROUGHPUT")
+        out("  onnxruntime is not installed on this host, so this measures the")
+        out("  daemon's fallback: models/live_ids.h compiled as a shared library")
+        out("  and called through ctypes (src/c_backend.py), softmax in numpy.")
     rng = np.random.RandomState(0)
     rows = []
     for bs in [1, 8, 32, 64, 128, 512, 1024]:
         X = rng.rand(bs, nf).astype(np.float32)
         for _ in range(30):
-            sess.run(None, {name: X})               # warm-up
+            run(X)                                  # warm-up
         ts = []
         reps = 2000 if bs == 1 else 500
         for _ in range(reps):
-            t0 = time.perf_counter(); sess.run(None, {name: X})
+            t0 = time.perf_counter(); run(X)
             ts.append((time.perf_counter() - t0) * 1e3)    # ms
         ts = np.array(ts)
         per_flow_us = ts.mean() / bs * 1000
@@ -301,13 +319,21 @@ def bench_memory():
     section("7. MEMORY FOOTPRINT")
     # Measure the ACTUAL daemon runtime in a clean subprocess (only the imports
     # the edge daemon uses), not this benchmark's heavy pandas/xgboost process.
+    backend, _ = _inference_runner()
+    if backend == "onnx":
+        load = ("import onnxruntime as rt;"
+                f"s=rt.InferenceSession({os.path.join(MODELS, 'live_ids.onnx')!r});"
+                "run=lambda X:s.run(None,{s.get_inputs()[0].name:X});")
+        deps = "onnxruntime + numpy"
+    else:
+        load = (f"sys.path.insert(0,{os.path.join(ROOT, 'src')!r});"
+                "from c_backend import CModel;run=CModel().predict;")
+        deps = "C backend + numpy"
     snippet = (
-        "import os,sys,json,numpy as np,onnxruntime as rt,psutil;"
-        f"m={os.path.join(MODELS,'live_ids.onnx')!r};"
-        "s=rt.InferenceSession(m);"
+        "import os,sys,json,numpy as np,psutil;" + load +
         "nf=json.load(open(%r))['n_features'];" % os.path.join(MODELS, 'live_meta.json') +
         "X=np.random.rand(64,nf).astype(np.float32);"
-        "[s.run(None,{s.get_inputs()[0].name:X}) for _ in range(50)];"
+        "[run(X) for _ in range(50)];"
         "print(psutil.Process().memory_info().rss)"
     )
     try:
@@ -315,14 +341,14 @@ def bench_memory():
                            capture_output=True, text=True, timeout=60)
         rss = int(r.stdout.strip().splitlines()[-1])
         out(f"  daemon runtime RSS     : {rss/1e6:.1f} MB "
-            f"(onnxruntime + numpy only, clean process)")
+            f"({deps} only, clean process)")
     except Exception as e:
         out(f"  daemon runtime RSS     : (measure failed: {e})")
         rss = None
     import psutil
     out(f"  benchmark process RSS  : {psutil.Process().memory_info().rss/1e6:.1f} MB "
         f"(harness — imports pandas/xgboost; NOT the daemon)")
-    out("  edge runtime deps      : onnxruntime + numpy (+ scapy for live sniff)")
+    out(f"  edge runtime deps      : {deps} (+ scapy for live sniff)")
     out("  MCU C model RAM        : ~130 bytes stack, 0 heap")
     return rss
 
@@ -399,6 +425,12 @@ def main():
     if _is_pi():
         section("8. HOST IS A RASPBERRY PI — numbers above are REAL, not projected")
         out(f"  hardware               : {_pi_model()}")
+        out(f"  architecture           : {platform.machine()} "
+            f"({platform.architecture()[0]} userland)")
+        out(f"  inference backend      : {_inference_runner()[0]}")
+        if platform.machine() != "aarch64":
+            out("  BELOW TARGET           : the documented target is a Pi 4 with a")
+            out("                           64-bit OS; this is not the acceptance run")
         out("  These are measured on the Pi itself; no scaling applied.")
     else:
         bench_target_gate()

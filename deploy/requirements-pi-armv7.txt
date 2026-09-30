@@ -1,0 +1,8 @@
+# Edge runtime for 32-bit ARM (armv7l), e.g. a Raspberry Pi 2 or a Pi on a
+# 32-bit OS. onnxruntime publishes no wheels for this architecture, so the
+# daemon runs the compiled C export instead (src/c_backend.py): that needs only
+# numpy and a C compiler (apt-get install gcc). Versions match
+# deploy/requirements-pi.txt; numpy comes from piwheels on Raspberry Pi OS and
+# links against libopenblas0 (installed by deploy/setup_pi.sh).
+numpy==2.2.6
+scapy==2.7.0

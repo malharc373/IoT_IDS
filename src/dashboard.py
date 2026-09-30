@@ -65,6 +65,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 DEFAULT_LOG = os.path.join(ROOT, "logs", "alerts.jsonl")
 IPS_STATE = os.path.join(ROOT, "logs", "ips_state.json")
+WINDOW_MINUTES = 30          # every panel shows incidents updated this recently
+LOW_CONF = 0.9               # matches the IPS default --ips-min-conf
 META = os.path.join(ROOT, "models", "live_meta.json")
 
 # category -> validated categorical hue (dark mode; see dataviz palette)
@@ -145,7 +147,32 @@ class AlertFeed:
             return list(self.records)
 
 
-def build_state(feed):
+def _parse_ts(ts):
+    try:
+        return dt.datetime.fromisoformat(ts)
+    except (TypeError, ValueError):
+        return None
+
+
+def read_sensor_status(path, now=None):
+    """The daemon's heartbeat, with an age and a stale flag, or None."""
+    if not path:
+        return None
+    try:
+        with open(path) as fh:
+            st = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    now = time.time() if now is None else now
+    age = max(0.0, now - float(st.get("epoch", 0)))
+    # a flush every flush_s; allow a few missed beats before calling it dead
+    limit = max(10.0, 3 * float(st.get("flush_s") or 2.0))
+    st["age_s"] = round(age, 1)
+    st["stale"] = age > limit
+    return st
+
+
+def build_state(feed, status_path=None, now=None):
     """Aggregate the feed into the shape the page renders.
 
     Accepts an AlertFeed, or a path (for callers and tests that pass one).
@@ -155,15 +182,32 @@ def build_state(feed):
     feed.refresh()
     records = feed.snapshot()
     cats = _categories()
+    now_dt = now or dt.datetime.now()
 
-    # dedupe to unique incidents keyed by (src_ip, kind): keep the largest/last
-    incidents = {}
+    # One snapshot and one time window feed EVERY panel, so the tiles, bars,
+    # top sources, timeline and table always describe the same incidents.
+    # An incident is keyed by (src_ip, kind); its row is the latest record.
+    latest, first_seen = {}, {}
+    stamped = []
     for r in records:
+        t = _parse_ts(r.get("ts"))
+        if t is None:
+            continue
         key = (r.get("src_ip"), r.get("kind"))
-        cur = incidents.get(key)
-        if cur is None or r.get("flows", 0) >= cur.get("flows", 0):
-            incidents[key] = r
-    inc = list(incidents.values())
+        stamped.append((t, key))
+        if key not in first_seen or t < first_seen[key]:
+            first_seen[key] = t
+        cur = latest.get(key)
+        if cur is None or t >= cur[0]:
+            latest[key] = (t, r)
+    newest = max((t for t, _ in latest.values()), default=None)
+    # anchor on "now" for a live sensor; on the last activity for an old log,
+    # so a finished demo run is still shown instead of an empty page
+    anchor = now_dt
+    if newest is not None and now_dt - newest > dt.timedelta(minutes=WINDOW_MINUTES):
+        anchor = newest
+    cut = anchor - dt.timedelta(minutes=WINDOW_MINUTES)
+    inc = [r for t, r in latest.values() if t >= cut]
 
     by_type = collections.Counter()
     by_cat = collections.Counter()
@@ -176,41 +220,55 @@ def build_state(feed):
         by_src[r.get("src_ip", "?")] += 1
         src_kinds[r.get("src_ip", "?")].add(k)
 
-    # timeline: incidents per minute over the last 30 minutes
-    buckets = collections.Counter()
-    for r in inc:
-        ts = r.get("ts", "")
-        try:
-            t = dt.datetime.fromisoformat(ts)
-            buckets[t.replace(second=0, microsecond=0).isoformat()] += 1
-        except Exception:
-            pass
-    timeline = [{"t": k, "count": v} for k, v in sorted(buckets.items())][-30:]
+    # timeline over the same window: per minute, how many incidents were
+    # active (reported by the sensor) and how many of those were first seen.
+    # Bucketing only first sightings drew an empty chart beside a busy tile
+    # whenever the same attackers kept going.
+    end_min = anchor.replace(second=0, microsecond=0)
+    start_min = end_min - dt.timedelta(minutes=WINDOW_MINUTES - 1)
+    active_per = collections.defaultdict(set)
+    for t, key in stamped:
+        m = t.replace(second=0, microsecond=0)
+        if start_min <= m <= end_min:
+            active_per[m].add(key)
+    new_per = collections.Counter(
+        t.replace(second=0, microsecond=0) for t in first_seen.values())
+    timeline = []
+    for i in range(WINDOW_MINUTES):
+        m = start_min + dt.timedelta(minutes=i)
+        timeline.append({"t": m.isoformat(), "count": len(active_per.get(m, ())),
+                         "new": new_per.get(m, 0)})
 
     # active IPS blocks and throttles
     blocks, throttles = [], []
     if os.path.exists(IPS_STATE):
         try:
-            now = time.time()
+            wall = time.time()
             raw = json.load(open(IPS_STATE))
             for bucket, out in (("active", blocks), ("throttled", throttles)):
                 # tolerate the pre-2026-08 flat format
                 items = raw.get(bucket, raw if bucket == "active" else {})
                 for ip, v in items.items():
-                    if isinstance(v, dict) and v.get("until", 0) > now:
+                    if isinstance(v, dict) and v.get("until", 0) > wall:
                         out.append({"ip": ip, "kind": v.get("kind", "?"),
-                                    "expires_in": int(v["until"] - now)})
+                                    "expires_in": int(v["until"] - wall)})
         except Exception:
             pass
 
     recent = sorted(inc, key=lambda r: r.get("ts", ""), reverse=True)[:15]
     for r in recent:
         r["category"] = cats.get(r.get("kind"), "attack")
+        # one flow at modest confidence is weak evidence; say so on screen
+        r["weak"] = (r.get("confidence") or 0) < LOW_CONF or r.get("flows", 0) <= 1
 
     return {
         "generated": dt.datetime.now().isoformat(timespec="seconds"),
         "totals": {
             "incidents": len(inc),
+            "incidents_in_log": len(latest),
+            "window_minutes": WINDOW_MINUTES,
+            "window_end": anchor.isoformat(timespec="seconds"),
+            "live_window": anchor is now_dt,
             "sources": len(by_src),
             "active_blocks": len(blocks),
             "active_throttles": len(throttles),
@@ -225,6 +283,7 @@ def build_state(feed):
         "blocks": sorted(blocks, key=lambda b: b["expires_in"]),
         "throttles": sorted(throttles, key=lambda b: b["expires_in"]),
         "timeline": timeline,
+        "sensor": read_sensor_status(status_path),
         "colors": CATEGORY_COLORS,
     }
 
@@ -272,27 +331,43 @@ font-weight:600;color:#0b0b0b}
 .spark{display:flex;align-items:flex-end;gap:2px;height:52px}
 .spark div{flex:1;background:var(--crit);border-radius:2px 2px 0 0;min-height:2px;opacity:.85}
 .empty{color:var(--muted);padding:18px 0;text-align:center}
+.dot.dead{background:var(--crit);animation:none;box-shadow:none}
+.dot.idle{background:var(--muted);animation:none;box-shadow:none}
+.sensor{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;font-size:12.5px;color:var(--ink2)}
+.sensor b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+.state{padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;color:#0b0b0b}
+.state.live{background:var(--good)}.state.dead{background:var(--crit)}.state.none{background:var(--muted)}
+tr.weak td{opacity:.55}.weak-tag{margin-left:6px;font-size:10.5px;color:var(--muted)}
+.tile .s{color:var(--muted);font-size:11.5px;margin-top:2px}
+.axis{display:flex;justify-content:space-between;color:var(--muted);font-size:10.5px;margin-top:4px}
 @media(max-width:820px){.tiles{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}}
 </style></head><body>
 <header><span class=dot></span><h1>IoT-IDS — live monitor</h1>
 <span class=sub id=gen>connecting…</span></header>
 <main>
+ <div class=card><div class=sensor id=sensor><span class="state none">NO SENSOR</span>
+   waiting for the daemon's heartbeat…</div></div>
  <div class=tiles>
-   <div class=tile><div class=k>Active incidents</div><div class="v crit" id=t_inc>0</div></div>
-   <div class=tile><div class=k>Attacking sources</div><div class=v id=t_src>0</div></div>
-   <div class=tile><div class=k>IPS blocks active</div><div class="v" id=t_blk>0</div></div>
-   <div class=tile><div class=k>Top attack</div><div class=v id=t_top>—</div></div>
+   <div class=tile><div class=k>Active incidents</div><div class="v crit" id=t_inc>0</div>
+     <div class=s id=t_inc_s></div></div>
+   <div class=tile><div class=k>Attacking sources</div><div class=v id=t_src>0</div>
+     <div class="s win"></div></div>
+   <div class=tile><div class=k>IPS blocks active</div><div class="v" id=t_blk>0</div>
+     <div class=s id=t_thr></div></div>
+   <div class=tile><div class=k>Top attack</div><div class=v id=t_top>—</div>
+     <div class="s win"></div></div>
  </div>
  <div class=grid>
-   <div class=card><h2>Incidents by attack type</h2><div id=bars></div>
+   <div class=card><h2>Incidents by attack type <span class=win style="text-transform:none;color:var(--muted);font-weight:400"></span></h2><div id=bars></div>
      <div class=legend id=legend></div></div>
-   <div class=card><h2>Incidents / min</h2><div class=spark id=spark></div>
-     <h2 style=margin-top:18px>Top sources</h2><div id=srcs></div></div>
+   <div class=card><h2>Incidents active / min <span style="text-transform:none;color:var(--muted);font-weight:400">(bright = first seen)</span></h2><div class=spark id=spark></div>
+     <div class=axis><span id=ax0></span><span>now</span></div>
+     <h2 style=margin-top:18px>Top sources <span class=win style="text-transform:none;color:var(--muted);font-weight:400"></span></h2><div id=srcs></div></div>
  </div>
  <div class=grid>
-   <div class=card><h2>Recent incidents</h2><table><thead><tr><th>Time</th><th>Source</th>
+   <div class=card><h2>Recent incidents <span class=win style="text-transform:none;color:var(--muted);font-weight:400"></span></h2><table><thead><tr><th>Time</th><th>Source</th>
      <th>Type</th><th>Flows</th><th>Conf</th></tr></thead><tbody id=recent></tbody></table></div>
-   <div class=card><h2>Blocked sources (IPS)</h2><table><thead><tr><th>IP</th><th>Reason</th>
+   <div class=card><h2>IPS actions (live)</h2><table><thead><tr><th>IP</th><th>Action</th><th>Reason</th>
      <th>Expires</th></tr></thead><tbody id=blocks></tbody></table></div>
  </div>
 </main>
@@ -308,14 +383,41 @@ if(authParam){
  history.replaceState(null,'',location.pathname);
 }
 const authToken=sessionStorage.getItem('iotids.dashboard.auth')||'';
+let busy=false;
 async function tick(){
+ if(busy)return;busy=true;try{await render()}finally{busy=false}
+}
+async function render(){
  const opts=authToken?{headers:{'X-Auth-Token':authToken}}:{};
- let s; try{s=await (await fetch('/api/state',opts)).json()}catch(e){$('gen').textContent='offline';return}
+ let s; try{const r=await fetch('/api/state',opts);if(!r.ok)throw r.status;s=await r.json()}
+ catch(e){ // never leave stale numbers looking live
+   $('gen').textContent='dashboard offline — values below are stale';
+   document.querySelector('main').style.opacity=.45;document.querySelector('.dot').className='dot dead';return}
+ document.querySelector('main').style.opacity=1;
  const C=s.colors;
  $('gen').textContent='updated '+s.generated.replace('T',' ');
- $('t_inc').textContent=s.totals.incidents;
+ const T=s.totals,win=T.live_window?`last ${T.window_minutes} min`:`${T.window_minutes} min to ${T.window_end.replace('T',' ')}`;
+ $('t_inc').textContent=T.incidents;
+ $('t_inc_s').textContent=`${win} · ${T.incidents_in_log} in log`;
+ document.querySelectorAll('.win').forEach(e=>e.textContent=win);
+ const sn=s.sensor,dot=document.querySelector('.dot');
+ if(!sn){dot.className='dot idle';
+   $('sensor').innerHTML='<span class="state none">NO SENSOR</span> no heartbeat file yet — is ids_daemon.py running with --replay or --iface?'}
+ else{const h=sn.host||{},dead=sn.stale;dot.className=dead?'dot dead':'dot';
+   const f=(v,u)=>v==null?'—':v+(u||'');
+   $('sensor').innerHTML=`<span class="state ${dead?'dead':'live'}">${dead?'SENSOR SILENT':'SENSOR LIVE'}</span>
+   <span>${esc(sn.mode)} · <b>${esc(sn.source||'')}</b></span>
+   <span>engine <b>${esc(sn.backend)}</b></span>
+   <span>last beat <b>${f(sn.age_s,'s')}</b> ago</span>
+   <span>packets <b>${(sn.pkts||0).toLocaleString()}</b> (${f(sn.pkts_per_s,'/s')})</span>
+   <span>flow table <b>${(sn.flows_in_table||0).toLocaleString()}</b></span>
+   <span>CPU <b>${f(h.cpu_temp_c,'°C')}</b></span>
+   <span>RSS <b>${f(h.rss_mb,' MB')}</b></span>
+   <span>load <b>${f(h.load1)}</b></span>
+   ${h.throttled?`<span style="color:var(--crit)">throttled 0x${h.throttled.toString(16)}</span>`:''}`}
  $('t_src').textContent=s.totals.sources;
- $('t_blk').textContent=s.totals.active_blocks;
+ $('t_blk').textContent=T.active_blocks;
+ $('t_thr').textContent=`${T.active_throttles} throttled`;
  $('t_top').textContent=s.totals.top_attack;
  const max=Math.max(1,...s.by_type.map(d=>d.count));
  $('bars').innerHTML=s.by_type.length?s.by_type.map(d=>{
@@ -326,19 +428,21 @@ async function tick(){
  const cats=[...new Set(s.by_type.map(d=>d.category))];
  $('legend').innerHTML=cats.map(c=>`<span><i style="background:${C[c]||C.attack}"></i>${esc(c)}</span>`).join('');
  const tl=s.timeline,tm=Math.max(1,...tl.map(d=>d.count));
- $('spark').innerHTML=tl.length?tl.map(d=>`<div title="${esc(d.t)}: ${d.count}" style="height:${d.count/tm*100}%"></div>`).join(''):'<div class=empty>—</div>';
+ $('spark').innerHTML=tl.map(d=>`<div title="${esc(d.t.replace('T',' '))}: ${d.count} active, ${d.new} new" style="height:${d.count/tm*100}%;${d.count?'':'opacity:.25;'}background:linear-gradient(to top,var(--crit) ${d.count?d.new/d.count*100:0}%,#7a3b3b 0)"></div>`).join('');
+ $('ax0').textContent=`-${T.window_minutes} min`;
  $('srcs').innerHTML=s.top_sources.length?s.top_sources.map(d=>
    `<div class=bar><div class=lab title="${esc(d.src_ip)}"><span class=ip>${esc(d.src_ip)}</span></div>
    <div class=track><div class=fill style="width:${d.count/Math.max(1,s.top_sources[0].count)*100}%;background:var(--crit)"></div></div>
    <div class=n>${d.count}</div></div>`).join(''):'<div class=empty>—</div>';
  $('recent').innerHTML=s.recent.length?s.recent.map(r=>{
    const col=C[r.category]||C.attack;
-   return `<tr><td>${esc((r.ts||'').split('T')[1]||r.ts)}</td>
+   return `<tr class="${r.weak?'weak':''}" title="${r.weak?'weak evidence: one flow or confidence below 0.9':''}"><td>${esc((r.ts||'').split('T')[1]||r.ts)}</td>
    <td class=ip>${esc(r.src_ip)}</td>
    <td><span class=pill style="background:${col}">${esc(r.category)}/${esc(r.kind)}</span></td>
-   <td>${r.flows||''}</td><td>${(r.confidence!=null?r.confidence:'')}</td></tr>`}).join(''):'<tr><td colspan=5 class=empty>no incidents yet</td></tr>';
- $('blocks').innerHTML=s.blocks.length?s.blocks.map(b=>
-   `<tr><td class=ip>${esc(b.ip)}</td><td>${esc(b.kind)}</td><td>${b.expires_in}s</td></tr>`).join(''):'<tr><td colspan=3 class=empty>none</td></tr>';
+   <td>${r.flows||''}</td><td>${(r.confidence!=null?r.confidence:'')}${r.weak?'<span class=weak-tag>weak</span>':''}</td></tr>`}).join(''):'<tr><td colspan=5 class=empty>no incidents yet</td></tr>';
+ const acts=[...s.blocks.map(b=>({...b,a:'block'})),...s.throttles.map(b=>({...b,a:'throttle'}))];
+ $('blocks').innerHTML=acts.length?acts.map(b=>
+   `<tr><td class=ip>${esc(b.ip)}</td><td>${b.a}</td><td>${esc(b.kind)}</td><td>${b.expires_in}s</td></tr>`).join(''):'<tr><td colspan=4 class=empty>none</td></tr>';
 }
 tick();setInterval(tick,2000);
 </script></body></html>"""
@@ -348,6 +452,7 @@ class Handler(BaseHTTPRequestHandler):
     log_path = DEFAULT_LOG
     feed = None
     token = None
+    status_path = None
 
     def _send(self, code, body, ctype):
         self.send_response(code)
@@ -378,7 +483,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         path = self.path.split("?", 1)[0]
         if path == "/api/state":
-            body = json.dumps(build_state(self.feed)).encode()
+            body = json.dumps(build_state(self.feed, self.status_path)).encode()
             self._send(200, body, "application/json")
         elif path in ("/", "/index.html"):
             self._send(200, PAGE.encode(), "text/html; charset=utf-8")
@@ -443,6 +548,9 @@ def main():
             f"          --insecure            you have read the above and accept it")
 
     Handler.log_path = args.log
+    # the daemon writes its heartbeat beside the alert log it was given
+    Handler.status_path = os.path.join(
+        os.path.dirname(os.path.abspath(args.log)), "sensor_status.json")
     Handler.feed = AlertFeed(args.log)
     Handler.token = token
     srv = ThreadingHTTPServer((args.host, args.port), Handler)

@@ -17,8 +17,10 @@ One detection core, three feeding modes:
 Alerts are aggregated per (source, attack-type): a port scan that touches 500
 ports becomes ONE "portscan from X — 500 ports" alert, not 500 lines — the way
 a real sensor reports.  Runtime deps: onnxruntime + numpy (+ scapy for --iface).
-The ONNX model consumes raw features directly, so no preprocessing artifact is
-needed on the edge.
+Where onnxruntime has no wheel (32-bit ARM, e.g. a Raspberry Pi 2), the daemon
+falls back to the C export in models/live_ids.h, compiled on first use
+(src/c_backend.py); that path needs only numpy and a C compiler. Both consume
+raw features directly, so no preprocessing artifact is needed on the edge.
 """
 from __future__ import annotations
 
@@ -43,6 +45,7 @@ from flow_features import (  # noqa: E402
 MODELS = os.path.join(ROOT, "models")
 DEFAULT_MODEL = os.path.join(MODELS, "live_ids.onnx")
 DEFAULT_META = os.path.join(MODELS, "live_meta.json")
+DEFAULT_HEADER = os.path.join(MODELS, "live_ids.h")
 PROTO_NAME = {6: "TCP", 17: "UDP", 1: "ICMP"}
 CATEGORIES = {}   # kind -> coarse category, populated when a Detector loads meta
 CATEGORIES["unknown"] = "anomaly"
@@ -84,18 +87,36 @@ def passes_threshold(kind, confidence, default, overrides=None):
 
 
 class Detector:
+    BACKENDS = ("auto", "onnx", "c")
+    backend = "onnx"
+
     def __init__(self, model_path=DEFAULT_MODEL, meta_path=DEFAULT_META,
-                 abstain_conf=None):
-        import onnxruntime as rt
-        if not os.path.exists(model_path):
-            sys.exit(f"[ERROR] model not found: {model_path}\n"
-                     f"        Run: python src/train_live_model.py")
+                 abstain_conf=None, backend="auto", header_path=DEFAULT_HEADER):
+        if backend not in self.BACKENDS:
+            raise ValueError(f"backend must be one of {', '.join(self.BACKENDS)}")
         with open(meta_path) as f:
             self.meta = json.load(f)
         self._validate_meta(self.meta)
-        self.sess = rt.InferenceSession(model_path)
-        self.input_name = self.sess.get_inputs()[0].name
         self.labels = {int(k): v for k, v in self.meta["labels"].items()}
+        if backend == "auto":
+            # onnxruntime has no 32-bit ARM wheels; fall back to the C export.
+            try:
+                import onnxruntime  # noqa: F401
+                backend = "onnx"
+            except ImportError:
+                backend = "c"
+        self.backend = backend
+        if backend == "onnx":
+            import onnxruntime as rt
+            if not os.path.exists(model_path):
+                sys.exit(f"[ERROR] model not found: {model_path}\n"
+                         f"        Run: python src/train_live_model.py")
+            self.sess = rt.InferenceSession(model_path)
+            self.input_name = self.sess.get_inputs()[0].name
+        else:
+            from c_backend import CModel
+            self.cmodel = CModel(header_path)
+            self._validate_c_model(self.cmodel, self.meta)
         self.categories = self.meta.get("categories", {})
         CATEGORIES.update(self.categories)
         if abstain_conf is not None and not 0.0 <= abstain_conf <= 1.0:
@@ -116,13 +137,31 @@ class Detector:
                 "feature semantics mismatch: retrain the model with the current "
                 "src/flow_features.py")
 
+    @staticmethod
+    def _validate_c_model(cmodel, meta):
+        """The C header is a separate export; refuse one that drifted from meta."""
+        expected = [meta["labels"][str(i)] for i in range(meta["num_class"])]
+        if (cmodel.n_features != len(FEATURE_NAMES)
+                or cmodel.contract_version != FEATURE_CONTRACT_VERSION
+                or cmodel.labels != expected):
+            raise ValueError(
+                "models/live_ids.h does not match live_meta.json: "
+                "re-export it with python src/export_c.py --verify")
+
+    def _run(self, X):
+        """Return (labels, probabilities) from whichever engine is loaded."""
+        if self.backend == "c":
+            return self.cmodel.predict(X)
+        out = self.sess.run(None, {self.input_name: X})
+        labels = np.asarray(out[0]).ravel().astype(int)
+        probs = np.asarray(out[1]) if len(out) > 1 else None
+        return labels, probs
+
     def classify(self, vectors):
         if not vectors:
             return []
         X = np.asarray(vectors, dtype=np.float32)
-        out = self.sess.run(None, {self.input_name: X})
-        labels = np.asarray(out[0]).ravel().astype(int)
-        probs = np.asarray(out[1]) if len(out) > 1 else None
+        labels, probs = self._run(X)
         res = []
         for i, lab in enumerate(labels):
             conf = float(probs[i][lab]) if probs is not None else 1.0
@@ -369,6 +408,87 @@ class AlertLog:
         self.fh.close()
 
 
+def _read_first(paths, cast=str):
+    for path in paths:
+        try:
+            with open(path) as fh:
+                return cast(fh.read().strip("\x00\n "))
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def host_health():
+    """Cheap host vitals for the heartbeat. Every field is optional."""
+    temp = _read_first(["/sys/class/thermal/thermal_zone0/temp"], int)
+    # Raspberry Pi firmware exposes the undervoltage/throttle bitmask here
+    throttled = _read_first(
+        ["/sys/devices/platform/soc/soc:firmware/get_throttled"],
+        lambda v: int(v, 16))
+    rss_kb = None
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    rss_kb = int(line.split()[1])
+    except OSError:
+        pass
+    if rss_kb is None:
+        try:
+            import resource
+            peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            rss_kb = peak // 1024 if sys.platform == "darwin" else peak
+        except Exception:
+            pass
+    try:
+        load1 = round(os.getloadavg()[0], 2)
+    except OSError:
+        load1 = None
+    return {"cpu_temp_c": round(temp / 1000, 1) if temp is not None else None,
+            "throttled": throttled,
+            "rss_mb": round(rss_kb / 1024, 1) if rss_kb is not None else None,
+            "load1": load1}
+
+
+class SensorStatus:
+    """Heartbeat file that lets the dashboard tell a quiet sensor from a dead one.
+
+    Written atomically next to the alert log on every flush. The dashboard
+    marks the sensor stale when the file stops changing, so a crashed daemon
+    no longer looks like a network with no attacks.
+    """
+
+    def __init__(self, path, mode, source, backend, flush_s):
+        self.path = path
+        self.base = {"mode": mode, "source": source, "backend": backend,
+                     "flush_s": flush_s, "pid": os.getpid(),
+                     "started": dt.datetime.now().isoformat(timespec="seconds")}
+        self._last = None           # (wall time, packet count)
+
+    def update(self, pkts, flows, incidents, cache):
+        now = time.time()
+        pps = None
+        if self._last is not None and now > self._last[0]:
+            pps = round((pkts - self._last[1]) / (now - self._last[0]), 1)
+        self._last = (now, pkts)
+        rec = dict(self.base, ts=dt.datetime.now().isoformat(timespec="seconds"),
+                   epoch=now, pkts=pkts, pkts_per_s=pps, flows_in_table=flows,
+                   incidents_emitted=incidents, scored=cache.scored,
+                   reused=cache.reused, host=host_health())
+        tmp = self.path + ".tmp"
+        try:
+            with open(tmp, "w") as fh:
+                json.dump(rec, fh)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass                    # a heartbeat must never take the sensor down
+
+
+def status_path_for(log_path):
+    return os.path.join(os.path.dirname(os.path.abspath(log_path)),
+                        "sensor_status.json")
+
+
 def _summary(n_flows, n_benign, incidents, alog, n_pkts, infer_ms):
     n_attack = n_flows - n_benign
     print("\n" + "=" * 64)
@@ -424,7 +544,7 @@ def run_offline(pcap_path, det, alog, csv_out=None):
 
 # ── REPLAY MODE (offline pcap, live-style progressive alerts) ─────────────────
 def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=0.5,
-               responder=None, class_min_conf=None):
+               responder=None, class_min_conf=None, status=None):
     print(CYA(f"\n[*] Replay (live-style): {pcap_path}  "
               f"window={window}s step={step}s min_conf={min_conf}"))
     packets = sorted(read_pcap(pcap_path), key=lambda x: x[0])
@@ -457,6 +577,8 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
         watermarks.retain(active)
         if responder is not None:
             responder.expire()
+        if status is not None:
+            status.update(n_pkts, len(table), alog.n, cache)
 
     for ts, raw, orig_len in packets:
         pk = parse_raw(raw, orig_len)
@@ -480,14 +602,14 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
 
 # ── LIVE MODE ─────────────────────────────────────────────────────────────────
 def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_conf=0.5,
-             responder=None, class_min_conf=None):
+             responder=None, class_min_conf=None, status=None):
     try:
         from scapy.all import AsyncSniffer
     except Exception:
         sys.exit("[ERROR] scapy required for --iface mode: pip install scapy")
 
     print(CYA(f"\n[*] Live IDS on {iface}  (Ctrl-C to stop)"))
-    print(DIM(f"    window={window}s flush={flush_s}s model=live_ids.onnx"))
+    print(DIM(f"    window={window}s flush={flush_s}s backend={det.backend}"))
     table = FlowTable()
     cache = VerdictCache(det)
     watermarks = IncidentWatermarks()
@@ -507,7 +629,11 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
         if ts > stats["last_ts"]:
             stats["last_ts"] = ts
 
-    sniffer = AsyncSniffer(iface=iface, prn=on_pkt, store=False)
+    # "eth0,lo" watches several interfaces with one flow table, e.g. a Pi that
+    # is attacked over the LAN and also floods itself over loopback in a demo
+    ifaces = [i.strip() for i in iface.split(",") if i.strip()]
+    sniffer = AsyncSniffer(iface=ifaces if len(ifaces) > 1 else ifaces[0],
+                           prn=on_pkt, store=False)
     sniffer.start()
     try:
         while True:
@@ -530,6 +656,8 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
             if responder is not None:
                 responder.expire()
             cache.forget(table.prune(older_than=idle_evict, now=now))
+            if status is not None:
+                status.update(stats["pkts"], len(table), alog.n, cache)
             print(DIM(f"  [{dt.datetime.now():%H:%M:%S}] pkts={stats['pkts']:,} "
                       f"flows={len(table):,} incidents={alog.n} "
                       f"| {cache.stats()}"), end="\r")
@@ -550,9 +678,14 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--pcap", help="offline: classify a capture file")
     g.add_argument("--replay", help="offline: replay a pcap, live-style alerts")
-    g.add_argument("--iface", help="live: sniff an interface (needs root)")
+    g.add_argument("--iface", help="live: sniff an interface, or a comma list "
+                                   "such as eth0,lo (needs root)")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--meta", default=DEFAULT_META)
+    ap.add_argument("--backend", default="auto", choices=Detector.BACKENDS,
+                    help="inference engine: onnx, c (models/live_ids.h via a "
+                         "compiled shared library), or auto = onnx when "
+                         "onnxruntime is installed, else c")
     ap.add_argument("--log", default=os.path.join(ROOT, "logs", "alerts.jsonl"))
     ap.add_argument("--syslog", default=None, metavar="HOST[:PORT]",
                     help="also send incidents to a SIEM over syslog/UDP "
@@ -612,7 +745,9 @@ def main():
     if args.abstain_conf is not None and not 0.0 <= args.abstain_conf <= 1.0:
         ap.error("--abstain-conf must be between 0 and 1")
 
-    det = Detector(args.model, args.meta, abstain_conf=args.abstain_conf)
+    det = Detector(args.model, args.meta, abstain_conf=args.abstain_conf,
+                   backend=args.backend)
+    print(CYA(f"[MODEL] inference backend: {det.backend}"))
     allowed_kinds = set(det.labels.values())
     try:
         class_min_conf = parse_class_thresholds(args.class_min_conf, allowed_kinds)
@@ -640,17 +775,24 @@ def main():
                               throttle_pps=args.ips_throttle_pps)
         print(CYA(f"[IPS] {json.dumps(responder.status())}"))
 
+    status = None
+    if not args.pcap:
+        mode = "replay" if args.replay else "live"
+        status = SensorStatus(status_path_for(args.log), mode,
+                              args.replay or args.iface, det.backend, args.step)
     try:
         if args.pcap:
             run_offline(args.pcap, det, alog, csv_out=args.csv)
         elif args.replay:
             run_replay(args.replay, det, alog, window=args.window,
                        step=args.step, speed=args.speed, min_conf=args.min_conf,
-                       responder=responder, class_min_conf=class_min_conf)
+                       responder=responder, class_min_conf=class_min_conf,
+                       status=status)
         else:
             run_live(args.iface, det, alog, window=args.window,
                      flush_s=args.step, min_conf=args.min_conf,
-                     responder=responder, class_min_conf=class_min_conf)
+                     responder=responder, class_min_conf=class_min_conf,
+                     status=status)
     finally:
         alog.close()
         for sink in sinks:

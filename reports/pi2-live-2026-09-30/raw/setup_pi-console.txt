@@ -1,0 +1,130 @@
+=== IoT-IDS Pi setup ===
+  repo      : /home/malharfalke/IOT-IDS
+  interface : eth0,lo
+  dashboard : port 8080
+  user      : malharfalke
+  runtime   : requirements-pi-armv7.txt
+--- [1/4] system packages ---
+Hit:1 http://archive.raspberrypi.com/debian trixie InRelease
+Hit:2 http://raspbian.raspberrypi.com/raspbian trixie InRelease
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+python3-venv is already the newest version (3.13.5-1).
+python3-pip is already the newest version (25.1.1+dfsg-1+rpt1).
+python3-pip set to manually installed.
+libpcap0.8t64 is already the newest version (1.10.5-2).
+libpcap0.8t64 set to manually installed.
+gcc is already the newest version (4:14.2.0-1+rpi1).
+gcc set to manually installed.
+The following additional packages will be installed:
+  libopenblas0-pthread
+The following NEW packages will be installed:
+  libopenblas0 libopenblas0-pthread tcpdump
+0 upgraded, 3 newly installed, 0 to remove and 81 not upgraded.
+Need to get 2,813 kB of archives.
+After this operation, 15.8 MB of additional disk space will be used.
+Get:1 http://raspbian.raspberrypi.com/raspbian trixie/main armhf libopenblas0-pthread armhf 0.3.29+ds-3+rpi1+b1 [2,397 kB]
+Get:2 http://raspbian.raspberrypi.com/raspbian trixie/main armhf libopenblas0 armhf 0.3.29+ds-3+rpi1+b1 [43.1 kB]
+Get:3 http://raspbian.raspberrypi.com/raspbian trixie/main armhf tcpdump armhf 4.99.5-2+b1 [373 kB]
+debconf: unable to initialize frontend: Dialog
+debconf: (Dialog frontend will not work on a dumb terminal, an emacs shell buffer, or without a controlling terminal.)
+debconf: falling back to frontend: Readline
+debconf: unable to initialize frontend: Readline
+debconf: (This frontend requires a controlling tty.)
+debconf: falling back to frontend: Teletype
+debconf: unable to initialize frontend: Teletype
+debconf: (This frontend requires a controlling tty.)
+debconf: falling back to frontend: Noninteractive
+Fetched 2,813 kB in 4s (774 kB/s)
+Selecting previously unselected package libopenblas0-pthread:armhf.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 121867 files and directories currently installed.)
+Preparing to unpack .../libopenblas0-pthread_0.3.29+ds-3+rpi1+b1_armhf.deb ...
+Unpacking libopenblas0-pthread:armhf (0.3.29+ds-3+rpi1+b1) ...
+Selecting previously unselected package libopenblas0:armhf.
+Preparing to unpack .../libopenblas0_0.3.29+ds-3+rpi1+b1_armhf.deb ...
+Unpacking libopenblas0:armhf (0.3.29+ds-3+rpi1+b1) ...
+Selecting previously unselected package tcpdump.
+Preparing to unpack .../tcpdump_4.99.5-2+b1_armhf.deb ...
+Unpacking tcpdump (4.99.5-2+b1) ...
+Setting up tcpdump (4.99.5-2+b1) ...
+Setting up libopenblas0-pthread:armhf (0.3.29+ds-3+rpi1+b1) ...
+update-alternatives: using /usr/lib/arm-linux-gnueabihf/openblas-pthread/libblas.so.3 to provide /usr/lib/arm-linux-gnueabihf/libblas.so.3 (libblas.so.3-arm-linux-gnueabihf) in auto mode
+update-alternatives: using /usr/lib/arm-linux-gnueabihf/openblas-pthread/liblapack.so.3 to provide /usr/lib/arm-linux-gnueabihf/liblapack.so.3 (liblapack.so.3-arm-linux-gnueabihf) in auto mode
+update-alternatives: using /usr/lib/arm-linux-gnueabihf/openblas-pthread/libopenblas.so.0 to provide /usr/lib/arm-linux-gnueabihf/libopenblas.so.0 (libopenblas.so.0-arm-linux-gnueabihf) in auto mode
+Setting up libopenblas0:armhf (0.3.29+ds-3+rpi1+b1) ...
+Processing triggers for man-db (2.13.1-1) ...
+Processing triggers for libc-bin (2.41-12+rpt1+deb13u4) ...
+--- [2/4] python venv + deps ---
+Looking in indexes: https://pypi.org/simple, https://www.piwheels.org/simple
+Requirement already satisfied: pip in ./.venv/lib/python3.13/site-packages (25.1.1)
+Collecting pip
+  Downloading https://www.piwheels.org/simple/pip/pip-26.2.1-py3-none-any.whl.metadata (4.6 kB)
+Downloading https://www.piwheels.org/simple/pip/pip-26.2.1-py3-none-any.whl (1.8 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 1.5 MB/s eta 0:00:00
+Installing collected packages: pip
+  Attempting uninstall: pip
+    Found existing installation: pip 25.1.1
+    Uninstalling pip-25.1.1:
+      Successfully uninstalled pip-25.1.1
+Successfully installed pip-26.2.1
+Looking in indexes: https://pypi.org/simple, https://www.piwheels.org/simple
+Collecting numpy==2.2.6 (from -r /home/malharfalke/IOT-IDS/deploy/requirements-pi-armv7.txt (line 7))
+  Downloading numpy-2.2.6-cp313-cp313-linux_armv7l.whl.metadata (7.3 kB)
+Collecting scapy==2.7.0 (from -r /home/malharfalke/IOT-IDS/deploy/requirements-pi-armv7.txt (line 8))
+  Downloading scapy-2.7.0-py3-none-any.whl.metadata (5.8 kB)
+Downloading numpy-2.2.6-cp313-cp313-linux_armv7l.whl (6.2 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 6.2/6.2 MB 889.0 kB/s  0:00:07
+Downloading scapy-2.7.0-py3-none-any.whl (2.6 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.6/2.6 MB 1.6 MB/s  0:00:02
+Installing collected packages: scapy, numpy
+
+Successfully installed numpy-2.2.6 scapy-2.7.0
+--- [3/4] runtime, artifact, feature and inference preflight ---
+IoT-IDS preflight — /home/malharfalke/IOT-IDS
+
+1. Interpreter
+  OK    Python version — 3.13.5
+
+2. Dependencies
+  OK    numpy — 2.2.6
+  WARN  onnxruntime — not installed; the daemon will use the C backend (models/live_ids.h + C compiler)
+        fix: none needed; onnxruntime has no wheels for 32-bit ARM
+  OK    scapy — 2.7.0
+
+3. Model artifacts
+  OK    models/live_ids.onnx — 91.8 KiB; edge inference model
+  OK    models/live_meta.json — 1.9 KiB; model and feature contract
+  OK    models/live_ids.h — 103.0 KiB; microcontroller C export
+
+4. Detection pipeline
+  OK    feature contract — v2; 22 features
+  OK    ONNX round-trip — icmpflood, confidence=0.647, backend=c
+
+5. Generated paths
+  OK    data/pcaps — 1 item(s)
+  OK    logs — 5 item(s)
+
+6. Live capture
+  OK    interface — eth0
+  OK    interface — lo
+  OK    capture privileges — root
+
+==============================================================
+READY — 1 non-blocking warning(s)
+next: bash demo/run_demo.sh
+--- [4/4] systemd services ---
+Created symlink '/etc/systemd/system/multi-user.target.wants/iot-ids.service' → '/etc/systemd/system/iot-ids.service'.
+Created symlink '/etc/systemd/system/multi-user.target.wants/iot-ids-dashboard.service' → '/etc/systemd/system/iot-ids-dashboard.service'.
+
+=== Done ===
+Start both :  sudo systemctl start iot-ids iot-ids-dashboard
+Dashboard  :  http://192.168.31.68:8080/?token=<redacted>
+             (token stored at /home/malharfalke/IOT-IDS/logs/dashboard.token, mode 600)
+             for no token at all, tunnel instead:
+               ssh -L 8080:127.0.0.1:8080 malharfalke@192.168.31.68
+Sensor logs:  journalctl -u iot-ids -f
+Dash logs  :  journalctl -u iot-ids-dashboard -f
+Alerts     :  tail -f /home/malharfalke/IOT-IDS/logs/alerts.jsonl
+EXIT 0

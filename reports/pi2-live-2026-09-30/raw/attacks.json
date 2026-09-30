@@ -1,0 +1,220 @@
+[
+ {
+  "attack": "portscan (nmap -sT, Mac->Pi)",
+  "tool_output": "Starting Nmap 7.98 ( https://nmap.org ) at 2026-09-30 19:58 +0530\nNmap scan report for rpi1234.lan (192.168.31.68)\nHost is up (0.12s latency).\nNot shown: 998 closed tcp ports (conn-refused)\nPORT    STATE SERVICE\n22/tcp  open  ssh\n111/tcp open  rpcbind\n\nNmap done: 1 IP address (1 host up) scanned in 25.08 seconds",
+  "duration_s": 25.1,
+  "labels_from_attacker": {
+   "portscan": {
+    "flows": 1539,
+    "pkts": 3078,
+    "dst_ports": 755,
+    "conf": 1.0
+   },
+   "mqtt_flood": {
+    "flows": 2,
+    "pkts": 8,
+    "dst_ports": 2,
+    "conf": 0.8248
+   },
+   "synflood": {
+    "flows": 1,
+    "pkts": 1,
+    "dst_ports": 1,
+    "conf": 0.9999
+   }
+  },
+  "first_alert": "2026-09-30T19:58:51",
+  "attack_start": "19:58:50",
+  "other_source_alerts": 0,
+  "sensor_pkts": 4324,
+  "cpu_temp_c": 51.9,
+  "rss_mb": 64.4,
+  "load1": 0.4
+ },
+ {
+  "attack": "ssh_bruteforce (40 failed logins, Mac->Pi)",
+  "tool_output": "done 40 attempts",
+  "duration_s": 22.3,
+  "labels_from_attacker": {
+   "ssh_bruteforce": {
+    "flows": 2,
+    "pkts": 18,
+    "dst_ports": 1,
+    "conf": 0.9997
+   }
+  },
+  "first_alert": "2026-09-30T20:00:14",
+  "attack_start": "19:59:53",
+  "other_source_alerts": 2,
+  "sensor_pkts": 1425,
+  "cpu_temp_c": 51.9,
+  "rss_mb": 64.5,
+  "load1": 0.58
+ },
+ {
+  "attack": "slowloris (40 conns x 60 s, Mac->Pi:8080)",
+  "tool_output": "opened 40 connections\nkept 40 open to the end",
+  "duration_s": 64.2,
+  "labels_from_attacker": {
+   "udpflood": {
+    "flows": 8,
+    "pkts": 8,
+    "dst_ports": 1,
+    "conf": 0.9999
+   },
+   "synflood": {
+    "flows": 1,
+    "pkts": 1,
+    "dst_ports": 1,
+    "conf": 0.9998
+   },
+   "slowloris": {
+    "flows": 29,
+    "pkts": 231,
+    "dst_ports": 2,
+    "conf": 0.9219
+   }
+  },
+  "first_alert": "2026-09-30T20:00:53",
+  "attack_start": "20:00:52",
+  "other_source_alerts": 6,
+  "sensor_pkts": 3031,
+  "cpu_temp_c": 51.4,
+  "rss_mb": 65.2,
+  "load1": 0.29
+ },
+ {
+  "attack": "xmas_scan (nmap -sX, Pi->self)",
+  "tool_output": "Starting Nmap 7.95 ( https://nmap.org ) at 2026-09-30 20:02 IST\nNmap scan report for rpi1234.lan (192.168.31.68)\nHost is up (0.00019s latency).\nNot shown: 998 closed tcp ports (reset)\nPORT    STATE         SERVICE\n22/tcp  open|filtered ssh\n111/tcp open|filtered rpcbind\n\nNmap done: 1 IP address (1 host up) scanned in 6.48 seconds",
+  "duration_s": 7.3,
+  "labels_from_attacker": {
+   "xmas_scan": {
+    "flows": 710,
+    "pkts": 1351,
+    "dst_ports": 706,
+    "conf": 0.968
+   },
+   "mqtt_flood": {
+    "flows": 2,
+    "pkts": 4,
+    "dst_ports": 1,
+    "conf": 0.518
+   },
+   "synflood": {
+    "flows": 2,
+    "pkts": 2,
+    "dst_ports": 1,
+    "conf": 0.9998
+   }
+  },
+  "first_alert": "2026-09-30T20:02:37",
+  "attack_start": "20:02:34",
+  "other_source_alerts": 3,
+  "sensor_pkts": 1818,
+  "cpu_temp_c": 53.0,
+  "rss_mb": 65.4,
+  "load1": 0.58
+ },
+ {
+  "attack": "synflood (hping3 -S, 2k pps x 20 s, Pi->self)",
+  "tool_output": "30104 packets transmitted, 0 packets received, 100% packet loss\nround-trip min/avg/max = 0.0/0.0/0.0 ms\nHPING 192.168.31.68 (eth0 192.168.31.68): S set, 40 headers + 0 data bytes",
+  "duration_s": 20.8,
+  "labels_from_attacker": {
+   "synflood": {
+    "flows": 2618,
+    "pkts": 2619,
+    "dst_ports": 1,
+    "conf": 0.9937
+   }
+  },
+  "first_alert": "2026-09-30T20:03:21",
+  "attack_start": "20:03:19",
+  "other_source_alerts": 2,
+  "sensor_pkts": 4273,
+  "cpu_temp_c": 53.5,
+  "rss_mb": 68.3,
+  "load1": 0.64
+ },
+ {
+  "attack": "udpflood (hping3 --udp, 2k pps x 20 s, Pi->self)",
+  "tool_output": "29739 packets transmitted, 0 packets received, 100% packet loss\nround-trip min/avg/max = 0.0/0.0/0.0 ms\nHPING 192.168.31.68 (eth0 192.168.31.68): udp mode set, 28 headers + 0 data bytes",
+  "duration_s": 20.8,
+  "labels_from_attacker": {
+   "synflood": {
+    "flows": 1,
+    "pkts": 2,
+    "dst_ports": 1,
+    "conf": 0.999
+   },
+   "xmas_scan": {
+    "flows": 3288,
+    "pkts": 3447,
+    "dst_ports": 171,
+    "conf": 0.8553
+   },
+   "icmpflood": {
+    "flows": 2,
+    "pkts": 256,
+    "dst_ports": 1,
+    "conf": 0.7043
+   },
+   "mqtt_flood": {
+    "flows": 1,
+    "pkts": 2,
+    "dst_ports": 1,
+    "conf": 0.9934
+   },
+   "slowloris": {
+    "flows": 1,
+    "pkts": 17,
+    "dst_ports": 1,
+    "conf": 0.9184
+   },
+   "udpflood": {
+    "flows": 1,
+    "pkts": 1,
+    "dst_ports": 1,
+    "conf": 0.9999
+   }
+  },
+  "first_alert": "2026-09-30T20:04:17",
+  "attack_start": "20:04:17",
+  "other_source_alerts": 0,
+  "sensor_pkts": 3695,
+  "cpu_temp_c": 54.1,
+  "rss_mb": 69.4,
+  "load1": 0.67
+ },
+ {
+  "attack": "icmpflood (hping3 --icmp, 2k pps x 20 s, Pi->self)",
+  "tool_output": "30021 packets transmitted, 0 packets received, 100% packet loss\nround-trip min/avg/max = 0.0/0.0/0.0 ms\nHPING 192.168.31.68 (eth0 192.168.31.68): icmp mode set, 28 headers + 0 data bytes",
+  "duration_s": 20.8,
+  "labels_from_attacker": {
+   "udpflood": {
+    "flows": 2,
+    "pkts": 2,
+    "dst_ports": 2,
+    "conf": 0.9999
+   },
+   "icmpflood": {
+    "flows": 2,
+    "pkts": 3036,
+    "dst_ports": 1,
+    "conf": 0.522
+   },
+   "synflood": {
+    "flows": 1,
+    "pkts": 1,
+    "dst_ports": 1,
+    "conf": 0.9998
+   }
+  },
+  "first_alert": "2026-09-30T20:05:28",
+  "attack_start": "20:05:15",
+  "other_source_alerts": 4,
+  "sensor_pkts": 3518,
+  "cpu_temp_c": 53.5,
+  "rss_mb": 69.7,
+  "load1": 0.69
+ }
+]

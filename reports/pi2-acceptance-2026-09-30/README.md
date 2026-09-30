@@ -34,8 +34,14 @@ a 64-bit OS. The Pi runs the **C export of the same model**
 - **Parity:** the same 5,000 inputs were scored by the Pi's C engine and the
   Mac's onnxruntime 1.23.2: identical labels on all 5,000, max probability
   difference 1.07 × 10⁻⁶.
-- A native armv7 build of onnxruntime 1.23.2 from official source is in
-  progress, so the ONNX path can be compared on the board itself.
+- **onnxruntime on the board:** a native armv7 build of onnxruntime 1.23.2
+  from official source ([`deploy/onnxruntime-armv7/`](../../deploy/onnxruntime-armv7/README.md))
+  runs the unchanged `live_ids.onnx` on the Pi 2. On the same 5,000 inputs its
+  labels match the Mac's onnxruntime and the Pi's C engine exactly (max
+  probability difference 4.8 × 10⁻⁷ and 1.4 × 10⁻⁶). On an idle board it
+  scores a single flow in 331 µs against the C engine's 511 µs, but a batch
+  of 1,024 at 7,881 flows/s against 17,492, so the C engine remains the
+  default.
 
 ## Benchmark (clean run, Pi 2, C engine)
 

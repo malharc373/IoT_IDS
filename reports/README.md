@@ -6,6 +6,7 @@
 | [`btech/IoT-IDS_Progress_May-Sep_2026.md`](btech/IoT-IDS_Progress_May-Sep_2026.md) | Progress notes the report was written from, with the claims policy (§7) |
 | [`reviews/REPORT_REVIEW_2026-09-30.md`](reviews/REPORT_REVIEW_2026-09-30.md) | Review of that report against the repository: corrections to make before the slides |
 | [`pi2-acceptance-2026-09-30/`](pi2-acceptance-2026-09-30/README.md) | What runs on the lab Raspberry Pi 2, with raw evidence |
+| [`pi2-live-2026-09-30/`](pi2-live-2026-09-30/README.md) | Pi 2 on a real network: false alarms on benign traffic, seven real attacks, IPS enforcement, reboot, soak |
 | [`PROJECT_REPORT.md`](PROJECT_REPORT.md) | Corrected technical report (source of `output/pdf/IOT_IDS_Corrected_Technical_Report.pdf`) |
 
 Historical and withdrawn material lives in [`legacy/`](../legacy/README.md),

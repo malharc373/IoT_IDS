@@ -1,0 +1,2 @@
+ts,active,nrestarts,mem_current_mb,cpu_s,daemon_rss_mb,temp_c,throttled,eth0_rx_pkts,eth0_rx_dropped,sensor_pkts,flows_in_table,incidents_emitted,alert_lines,load1
+2026-09-30T20:25:13+05:30,active,0,na,18,53.5,55.1,0x0,1111,0,1065,45,27,421,2.61

@@ -1,0 +1,48 @@
+table inet iot_ids {
+	set blocked {
+		type ipv4_addr
+		flags timeout
+	}
+
+	set throttled {
+		type ipv4_addr
+		flags timeout
+	}
+
+	set blocked6 {
+		type ipv6_addr
+		flags timeout
+	}
+
+	set throttled6 {
+		type ipv6_addr
+		flags timeout
+	}
+
+	set throttle_input_v4 {
+		type ipv4_addr
+		size 65535
+		flags dynamic
+		elements = { 192.168.31.1 limit rate over 20/second burst 5 packets, 192.168.31.79 limit rate over 20/second burst 5 packets,
+			     192.168.31.135 limit rate over 20/second burst 5 packets, 192.168.31.178 limit rate over 20/second burst 5 packets }
+	}
+
+	set throttle_input_v6 {
+		type ipv6_addr
+		size 65535
+		flags dynamic
+		elements = { fe80::bf:469a:113:c1e6 limit rate over 20/second burst 5 packets,
+			     fe80::10de:cce4:e896:e64e limit rate over 20/second burst 5 packets,
+			     fe80::2e9c:58ff:fe1a:2da9 limit rate over 20/second burst 5 packets,
+			     fe80::a44e:32ff:fe9e:6618 limit rate over 20/second burst 5 packets,
+			     fe80::d4a7:faff:fe04:4a8e limit rate over 20/second burst 5 packets }
+	}
+
+	chain input {
+		type filter hook input priority filter - 1; policy accept;
+		ip saddr @throttled add @throttle_input_v4 { ip saddr limit rate over 20/second burst 5 packets } drop
+		ip6 saddr @throttled6 add @throttle_input_v6 { ip6 saddr limit rate over 20/second burst 5 packets } drop
+		ip saddr @blocked drop
+		ip6 saddr @blocked6 drop
+	}
+}

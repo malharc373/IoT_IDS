@@ -45,6 +45,31 @@ The model was trained only on generated traffic and has never seen ordinary
 LAN chatter (IPv6 neighbour discovery, multicast, IGMP, mDNS). It labels it
 with high confidence, so confidence cannot filter it; incident size can.
 
+### 2b. Second baseline with a flow count (30 September, 23:43–23:53)
+
+The first baseline did not count distinct flows, so a rate per 1,000 flows could
+not be computed from it. A second ten-minute benign capture was taken with
+`tcpdump -s 128` (headers only) on eth0 and replayed through the same detector
+([analysis](scripts/baseline2_analyze.sh), [flow count](scripts/baseline2_flows.py)).
+The capture stays on the Pi because it contains household traffic; its SHA-256
+is `ec3c768f7d9186dda165a964395214714bcdaba908beaf422fc1c525ceedc3f7`. The
+laptop's SSH checks to the Pi were part of the traffic.
+
+| Measure | Value |
+|---|---|
+| Duration | 598.7 s |
+| Packets | 3,696 captured (0 dropped by the kernel); 3,552 IP packets parsed |
+| Distinct flows | 69 |
+| Flows given an attack label at confidence ≥ 0.5 (1 s flushes, 60 s window, as live) | 48 of 69, i.e. 696 per 1,000 flows |
+| Distinct false-alarm incidents (source × type) | 26, i.e. 2.6 per minute |
+| Labels | `udpflood` 16, `icmpflood` 9, `synflood` 1 (the laptop's SSH checks) |
+| From IPv6 sources | 16 of 26 (15 link-local, 1 global); 1 more from `0.0.0.0` |
+| Surviving a ≥ 0.9 confidence gate / a ≥ 5 flows gate | 16 of 26 / 0 of 26 (largest incident: 3 flows) |
+
+The pattern matches §2: small, IPv6-heavy incidents that confidence does not
+filter and incident size does. On a quiet network almost every flow is local
+chatter the model never saw in training, so the per-flow rate is very high.
+
 ## 3. Real attacks
 
 `scripts/run_attacks.py`, one attack at a time with gaps

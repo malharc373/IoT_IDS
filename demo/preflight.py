@@ -84,7 +84,8 @@ def check_dependencies(runtime_only: bool) -> None:
                 # No onnxruntime wheels exist for 32-bit ARM; the daemon then
                 # compiles models/live_ids.h instead (src/c_backend.py).
                 _warn(module_name, "not installed; the daemon will use the C "
-                      "backend (models/live_ids.h + C compiler)", fix)
+                      "backend (models/live_ids.h + C compiler)",
+                      "none needed; onnxruntime has no wheels for 32-bit ARM")
             else:
                 _fail(module_name, repr(exc), fix)
 
@@ -180,15 +181,15 @@ def check_interface(interface: str) -> None:
     if not sys.platform.startswith("linux"):
         _warn("platform", "interface validation is available on Linux only")
         return
-    path = os.path.join("/sys/class/net", interface)
-    if os.path.exists(path):
-        _ok("interface", interface)
-    else:
+    for name in [i.strip() for i in interface.split(",") if i.strip()]:
+        if os.path.exists(os.path.join("/sys/class/net", name)):
+            _ok("interface", name)
+            continue
         try:
             choices = ", ".join(sorted(os.listdir("/sys/class/net")))
         except OSError:
             choices = "run: ip -brief address"
-        _fail("interface", f"{interface!r} not found", f"choose one of: {choices}")
+        _fail("interface", f"{name!r} not found", f"choose one of: {choices}")
     if hasattr(os, "geteuid") and os.geteuid() != 0:
         _warn("capture privileges", "not running as root", "rerun with sudo")
     else:

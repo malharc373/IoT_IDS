@@ -408,6 +408,87 @@ class AlertLog:
         self.fh.close()
 
 
+def _read_first(paths, cast=str):
+    for path in paths:
+        try:
+            with open(path) as fh:
+                return cast(fh.read().strip("\x00\n "))
+        except (OSError, ValueError):
+            continue
+    return None
+
+
+def host_health():
+    """Cheap host vitals for the heartbeat. Every field is optional."""
+    temp = _read_first(["/sys/class/thermal/thermal_zone0/temp"], int)
+    # Raspberry Pi firmware exposes the undervoltage/throttle bitmask here
+    throttled = _read_first(
+        ["/sys/devices/platform/soc/soc:firmware/get_throttled"],
+        lambda v: int(v, 16))
+    rss_kb = None
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    rss_kb = int(line.split()[1])
+    except OSError:
+        pass
+    if rss_kb is None:
+        try:
+            import resource
+            peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+            rss_kb = peak // 1024 if sys.platform == "darwin" else peak
+        except Exception:
+            pass
+    try:
+        load1 = round(os.getloadavg()[0], 2)
+    except OSError:
+        load1 = None
+    return {"cpu_temp_c": round(temp / 1000, 1) if temp is not None else None,
+            "throttled": throttled,
+            "rss_mb": round(rss_kb / 1024, 1) if rss_kb is not None else None,
+            "load1": load1}
+
+
+class SensorStatus:
+    """Heartbeat file that lets the dashboard tell a quiet sensor from a dead one.
+
+    Written atomically next to the alert log on every flush. The dashboard
+    marks the sensor stale when the file stops changing, so a crashed daemon
+    no longer looks like a network with no attacks.
+    """
+
+    def __init__(self, path, mode, source, backend, flush_s):
+        self.path = path
+        self.base = {"mode": mode, "source": source, "backend": backend,
+                     "flush_s": flush_s, "pid": os.getpid(),
+                     "started": dt.datetime.now().isoformat(timespec="seconds")}
+        self._last = None           # (wall time, packet count)
+
+    def update(self, pkts, flows, incidents, cache):
+        now = time.time()
+        pps = None
+        if self._last is not None and now > self._last[0]:
+            pps = round((pkts - self._last[1]) / (now - self._last[0]), 1)
+        self._last = (now, pkts)
+        rec = dict(self.base, ts=dt.datetime.now().isoformat(timespec="seconds"),
+                   epoch=now, pkts=pkts, pkts_per_s=pps, flows_in_table=flows,
+                   incidents_emitted=incidents, scored=cache.scored,
+                   reused=cache.reused, host=host_health())
+        tmp = self.path + ".tmp"
+        try:
+            with open(tmp, "w") as fh:
+                json.dump(rec, fh)
+            os.replace(tmp, self.path)
+        except OSError:
+            pass                    # a heartbeat must never take the sensor down
+
+
+def status_path_for(log_path):
+    return os.path.join(os.path.dirname(os.path.abspath(log_path)),
+                        "sensor_status.json")
+
+
 def _summary(n_flows, n_benign, incidents, alog, n_pkts, infer_ms):
     n_attack = n_flows - n_benign
     print("\n" + "=" * 64)
@@ -463,7 +544,7 @@ def run_offline(pcap_path, det, alog, csv_out=None):
 
 # ── REPLAY MODE (offline pcap, live-style progressive alerts) ─────────────────
 def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=0.5,
-               responder=None, class_min_conf=None):
+               responder=None, class_min_conf=None, status=None):
     print(CYA(f"\n[*] Replay (live-style): {pcap_path}  "
               f"window={window}s step={step}s min_conf={min_conf}"))
     packets = sorted(read_pcap(pcap_path), key=lambda x: x[0])
@@ -496,6 +577,8 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
         watermarks.retain(active)
         if responder is not None:
             responder.expire()
+        if status is not None:
+            status.update(n_pkts, len(table), alog.n, cache)
 
     for ts, raw, orig_len in packets:
         pk = parse_raw(raw, orig_len)
@@ -519,14 +602,14 @@ def run_replay(pcap_path, det, alog, window=60.0, step=1.0, speed=0.0, min_conf=
 
 # ── LIVE MODE ─────────────────────────────────────────────────────────────────
 def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_conf=0.5,
-             responder=None, class_min_conf=None):
+             responder=None, class_min_conf=None, status=None):
     try:
         from scapy.all import AsyncSniffer
     except Exception:
         sys.exit("[ERROR] scapy required for --iface mode: pip install scapy")
 
     print(CYA(f"\n[*] Live IDS on {iface}  (Ctrl-C to stop)"))
-    print(DIM(f"    window={window}s flush={flush_s}s model=live_ids.onnx"))
+    print(DIM(f"    window={window}s flush={flush_s}s backend={det.backend}"))
     table = FlowTable()
     cache = VerdictCache(det)
     watermarks = IncidentWatermarks()
@@ -546,7 +629,11 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
         if ts > stats["last_ts"]:
             stats["last_ts"] = ts
 
-    sniffer = AsyncSniffer(iface=iface, prn=on_pkt, store=False)
+    # "eth0,lo" watches several interfaces with one flow table, e.g. a Pi that
+    # is attacked over the LAN and also floods itself over loopback in a demo
+    ifaces = [i.strip() for i in iface.split(",") if i.strip()]
+    sniffer = AsyncSniffer(iface=ifaces if len(ifaces) > 1 else ifaces[0],
+                           prn=on_pkt, store=False)
     sniffer.start()
     try:
         while True:
@@ -569,6 +656,8 @@ def run_live(iface, det, alog, window=60.0, flush_s=2.0, idle_evict=120.0, min_c
             if responder is not None:
                 responder.expire()
             cache.forget(table.prune(older_than=idle_evict, now=now))
+            if status is not None:
+                status.update(stats["pkts"], len(table), alog.n, cache)
             print(DIM(f"  [{dt.datetime.now():%H:%M:%S}] pkts={stats['pkts']:,} "
                       f"flows={len(table):,} incidents={alog.n} "
                       f"| {cache.stats()}"), end="\r")
@@ -589,7 +678,8 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--pcap", help="offline: classify a capture file")
     g.add_argument("--replay", help="offline: replay a pcap, live-style alerts")
-    g.add_argument("--iface", help="live: sniff an interface (needs root)")
+    g.add_argument("--iface", help="live: sniff an interface, or a comma list "
+                                   "such as eth0,lo (needs root)")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--meta", default=DEFAULT_META)
     ap.add_argument("--backend", default="auto", choices=Detector.BACKENDS,
@@ -685,17 +775,24 @@ def main():
                               throttle_pps=args.ips_throttle_pps)
         print(CYA(f"[IPS] {json.dumps(responder.status())}"))
 
+    status = None
+    if not args.pcap:
+        mode = "replay" if args.replay else "live"
+        status = SensorStatus(status_path_for(args.log), mode,
+                              args.replay or args.iface, det.backend, args.step)
     try:
         if args.pcap:
             run_offline(args.pcap, det, alog, csv_out=args.csv)
         elif args.replay:
             run_replay(args.replay, det, alog, window=args.window,
                        step=args.step, speed=args.speed, min_conf=args.min_conf,
-                       responder=responder, class_min_conf=class_min_conf)
+                       responder=responder, class_min_conf=class_min_conf,
+                       status=status)
         else:
             run_live(args.iface, det, alog, window=args.window,
                      flush_s=args.step, min_conf=args.min_conf,
-                     responder=responder, class_min_conf=class_min_conf)
+                     responder=responder, class_min_conf=class_min_conf,
+                     status=status)
     finally:
         alog.close()
         for sink in sinks:

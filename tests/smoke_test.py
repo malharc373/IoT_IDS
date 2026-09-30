@@ -918,6 +918,67 @@ def t_dashboard():
         srv.shutdown()
 
 
+def t_dashboard_panels_agree_and_window():
+    """Every panel is computed from the same incidents in the same window."""
+    import importlib.util, json as _json, datetime as _dt
+    spec = importlib.util.spec_from_file_location("dash", os.path.join(ROOT, "src", "dashboard.py"))
+    dash = importlib.util.module_from_spec(spec); spec.loader.exec_module(dash)
+    now = _dt.datetime(2026, 9, 30, 12, 0, 0)
+    def rec(minutes_ago, ip, kind, flows, conf=0.99):
+        ts = (now - _dt.timedelta(minutes=minutes_ago)).isoformat(timespec="seconds")
+        return _json.dumps({"ts": ts, "src_ip": ip, "kind": kind,
+                            "flows": flows, "confidence": conf}) + "\n"
+    logp = os.path.join(TMP, "window_alerts.jsonl")
+    with open(logp, "w") as f:
+        f.write(rec(90, "198.51.100.9", "portscan", 50))      # outside window
+        f.write(rec(10, "198.51.100.1", "synflood", 10))
+        f.write(rec(5, "198.51.100.1", "synflood", 400))      # same incident grows
+        f.write(rec(3, "198.51.100.2", "udpflood", 1, conf=0.6))
+        f.write(rec(1, "198.51.100.1", "portscan", 30))
+    st = dash.build_state(logp, now=now)
+    T = st["totals"]
+    assert T["incidents"] == 3 and T["incidents_in_log"] == 4, T
+    assert sum(d["count"] for d in st["by_type"]) == T["incidents"]
+    assert sum(d["count"] for d in st["by_category"]) == T["incidents"]
+    assert sum(d["count"] for d in st["top_sources"]) == T["incidents"]
+    assert T["sources"] == len(st["top_sources"]) == 2
+    assert len(st["recent"]) == T["incidents"]
+    assert "portscan" in {d["type"] for d in st["by_type"]}      # the recent one
+    assert len(st["timeline"]) == T["window_minutes"]
+    assert sum(b["new"] for b in st["timeline"]) == 3            # first sightings
+    assert max(b["count"] for b in st["timeline"]) >= 1           # activity drawn
+    syn = next(r for r in st["recent"] if r["kind"] == "synflood")
+    assert syn["flows"] == 400                                   # latest record
+    weak = next(r for r in st["recent"] if r["kind"] == "udpflood")
+    assert weak["weak"] and not syn["weak"]
+    # an old log anchors on its last activity instead of rendering empty
+    old = dash.build_state(logp, now=now + _dt.timedelta(days=3))
+    assert old["totals"]["incidents"] == 3 and not old["totals"]["live_window"]
+
+
+def t_sensor_heartbeat():
+    """Replay writes a heartbeat; the dashboard reports it live, then stale."""
+    import importlib.util, json as _json
+    from ids_daemon import Detector, AlertLog, SensorStatus, run_replay, status_path_for
+    spec = importlib.util.spec_from_file_location("dash", os.path.join(ROOT, "src", "dashboard.py"))
+    dash = importlib.util.module_from_spec(spec); spec.loader.exec_module(dash)
+    det = Detector()
+    logp = os.path.join(TMP, "hb", "alerts.jsonl")
+    os.makedirs(os.path.dirname(logp), exist_ok=True)
+    alog = AlertLog(logp)
+    status = SensorStatus(status_path_for(logp), "replay", "x.pcap", det.backend, 1.0)
+    run_replay(_make_pcap("portscan", 71236), det, alog, status=status)
+    alog.close()
+    raw = _json.load(open(status_path_for(logp)))
+    assert raw["mode"] == "replay" and raw["backend"] == det.backend
+    assert raw["pkts"] > 0 and raw["scored"] + raw["reused"] > 0
+    assert "rss_mb" in raw["host"]
+    live = dash.read_sensor_status(status_path_for(logp), now=raw["epoch"] + 1)
+    dead = dash.read_sensor_status(status_path_for(logp), now=raw["epoch"] + 60)
+    assert not live["stale"] and dead["stale"]
+    assert dash.read_sensor_status(os.path.join(TMP, "hb", "missing.json")) is None
+
+
 def t_dashboard_auth_and_binding():
     """Alert feed is not served to a network unauthenticated (F10)."""
     import importlib.util, urllib.request, urllib.error, threading, subprocess
@@ -1967,6 +2028,8 @@ TESTS = [
         ("no credential literals", t_no_credential_literals),
         ("no tracked workspace debris", t_no_tracked_workspace_debris),
         ("dashboard incremental reads", t_dashboard_incremental_and_rotation),
+        ("dashboard panels agree + window", t_dashboard_panels_agree_and_window),
+        ("sensor heartbeat live/stale", t_sensor_heartbeat),
         ("alert log rotation", t_alert_log_rotation),
         ("detector classify known", t_detector_classify_known),
         ("C backend matches ONNX", t_c_backend_matches_onnx),

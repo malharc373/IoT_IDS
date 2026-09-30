@@ -38,8 +38,12 @@ configures an unknown-class enforcement threshold.
 - no labelled real-traffic evaluation;
 - no calibrated operating threshold or validated unknown-attack detector;
 - host-context features may shift with placement and observation window;
-- Raspberry Pi throughput/soak and MCU on-device feature extraction are not
-  measured; and
+- Raspberry Pi 4 (64-bit) throughput is not measured; a Raspberry Pi 2
+  (32-bit) run is measured and a 24-hour soak is in progress;
+- MCU use is inference only: there is no on-device feature extraction or
+  capture, and nothing has been measured on an ESP32;
+- on real LAN traffic the model raised about 1.9 false-alarm incidents per
+  minute, so its outputs are not a safe basis for automatic blocking; and
 - enforcement can disrupt a network, so the daemon defaults to non-enforcing
   behavior and requires topology-aware configuration.
 
@@ -56,7 +60,7 @@ checksum manifest.
 | artifact | purpose | input contract | evidence | runtime use |
 |---|---|---|---|---|
 | `live_ids.onnx` | 10-class live IDS | 22 raw features, contract v2 | scenario-held-out synthetic traffic | Pi/macOS daemon |
-| `live_ids.h` | compiled form of `live_ids.onnx`'s XGBoost source | same 22 features | class and raw score-margin parity verified | MCU |
+| `live_ids.h` | compiled form of `live_ids.onnx`'s XGBoost source | same 22 features | class and raw score-margin parity verified; matched onnxruntime on 5,000 inputs on a Pi 2 | 32-bit Pi (default engine); MCU inference example |
 | `live_meta.json` | machine-readable contract/model card | names, version, labels | states synthetic scope | daemon guard |
 
 The SFAF pipeline produces a different artifact: a **binary, 12-feature research

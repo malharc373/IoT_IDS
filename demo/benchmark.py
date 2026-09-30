@@ -78,7 +78,9 @@ def bench_params():
         out("  Boosted trees / nodes  : (xgboost not installed — skipped)")
     out(f"  ONNX model size        : {sizes['live_ids.onnx']/1024:.1f} KB")
     if "live_ids.h" in sizes:
-        cd = f" (~{n_nodes*16//1024} KB const data)" if n_nodes else ""
+        # 16-byte node + per-tree int root and uint8 class index
+        const_b = n_nodes * 16 + (n_trees or 0) * 5 if n_nodes else 0
+        cd = f" (~{const_b//1024} KB const data)" if n_nodes else ""
         out(f"  C header size          : {sizes['live_ids.h']/1024:.1f} KB{cd}")
     out(f"  In-domain metrics      : {meta['metrics']}")
     if meta.get("split"):

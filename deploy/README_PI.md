@@ -3,8 +3,17 @@
 End-to-end walkthrough: flash → connect → copy → install → run → demonstrate.
 Target: **Raspberry Pi 4 with 64-bit Raspberry Pi OS and glibc 2.28+**. The
 dependency lock has CPython 3.10 aarch64 wheels available for its native
-packages. Actual Pi throughput and soak evidence is still pending; host
-inference timings are not a substitute for that acceptance run.
+packages. The 64-bit path was built first, but no Pi 4 was available, so it
+has not run on a Pi 4 yet.
+
+What has run on hardware is a **Raspberry Pi 2 on 32-bit Raspberry Pi OS**.
+onnxruntime has no 32-bit ARM wheels, so a 32-bit path was added for the same
+model (see *32-bit Pi* in §4). Its results, including real attacks, benign
+false alarms, reboot recovery and an IPS enforce test, are in
+[`reports/pi2-acceptance-2026-09-30/`](../reports/pi2-acceptance-2026-09-30/README.md)
+and [`reports/pi2-live-2026-09-30/`](../reports/pi2-live-2026-09-30/README.md).
+A 24-hour soak is in progress. Host inference timings are not a substitute for
+the Pi 4 acceptance run.
 
 The edge model (`models/live_ids.onnx`, 91.8 KB) takes raw flow features — trees
 are scale-invariant, so there is no scaler to ship or drift — and the Pi needs
@@ -77,8 +86,11 @@ armv7l wheels, so the installer detects the architecture, installs `gcc` and
 `deploy/requirements-pi-armv7.txt` (numpy + scapy only), and the daemon runs
 the C export of the same model (`models/live_ids.h`, compiled on first use by
 `src/c_backend.py`). The smoke suite checks it against onnxruntime (identical
-labels, probabilities within 1e-5). Force an engine with
-`--backend onnx|c`. A 32-bit Pi is below the documented Pi 4 target; the
+labels, probabilities within 1e-5), and on the Pi 2 it matched 64-bit
+onnxruntime on 5,000 inputs. If you need onnxruntime itself on 32-bit, build
+the wheel with [`onnxruntime-armv7/`](onnxruntime-armv7/README.md). It gives
+the same answers, but on a Pi 2 it is about half as fast in batch, so C stays
+the default. Force an engine with `--backend onnx|c`. A 32-bit Pi is below the documented Pi 4 target; the
 benchmark labels such a run so it is not mistaken for the acceptance run.
 
 The same preflight can be run before installation or a demonstration:
@@ -120,6 +132,18 @@ sudo .venv/bin/python src/ids_daemon.py --iface eth0
 
 ### Prevention (IPS) mode
 
+> **Experimental. Do not enable enforcement on a network with other people's
+> devices on it.** In the one enforce test on real traffic (Pi 2, home LAN),
+> the attacker was blocked within about 5 s, but false alarms also throttled 12
+> innocent sources, including the router, and blocked one device. Link-local
+> and unspecified sources are now excluded, which covers 7 of those 12. The
+> router and ordinary IPv4 hosts can still be hit, because the detector itself
+> raises about 1.9 false-alarm incidents per minute on normal LAN traffic.
+> Enforcement through the systemd service and inline `--ips-scope network` mode
+> have not been tested. Keep the installed service IDS-only; use `--ips`
+> (dry-run) to see what it would do, and `--prevent` only on an isolated test
+> network. Details: [`reports/pi2-live-2026-09-30/`](../reports/pi2-live-2026-09-30/README.md) §4.
+
 The responder acts on a ladder — **monitor → throttle → block** — via
 nftables/iptables, with an allowlist and auto-expiry:
 
@@ -130,8 +154,10 @@ sudo .venv/bin/python src/ids_daemon.py --iface eth0 --prevent \
 ```
 
 Use `--ips` (instead of `--prevent`) for a dry-run that logs what it *would*
-do without touching the firewall. To make the systemd service enforce, add
-`--prevent` to `ExecStart` in `deploy/setup_pi.sh` before installing.
+do without touching the firewall. It is possible to make the systemd service
+enforce by adding `--prevent` to `ExecStart` in `deploy/setup_pi.sh` before
+installing, but that path is untested and not recommended (see the warning
+above).
 
 Two flags change what actually happens, and neither has a safe default you can
 ignore:

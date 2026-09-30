@@ -17,8 +17,10 @@ One detection core, three feeding modes:
 Alerts are aggregated per (source, attack-type): a port scan that touches 500
 ports becomes ONE "portscan from X — 500 ports" alert, not 500 lines — the way
 a real sensor reports.  Runtime deps: onnxruntime + numpy (+ scapy for --iface).
-The ONNX model consumes raw features directly, so no preprocessing artifact is
-needed on the edge.
+Where onnxruntime has no wheel (32-bit ARM, e.g. a Raspberry Pi 2), the daemon
+falls back to the C export in models/live_ids.h, compiled on first use
+(src/c_backend.py); that path needs only numpy and a C compiler. Both consume
+raw features directly, so no preprocessing artifact is needed on the edge.
 """
 from __future__ import annotations
 
@@ -43,6 +45,7 @@ from flow_features import (  # noqa: E402
 MODELS = os.path.join(ROOT, "models")
 DEFAULT_MODEL = os.path.join(MODELS, "live_ids.onnx")
 DEFAULT_META = os.path.join(MODELS, "live_meta.json")
+DEFAULT_HEADER = os.path.join(MODELS, "live_ids.h")
 PROTO_NAME = {6: "TCP", 17: "UDP", 1: "ICMP"}
 CATEGORIES = {}   # kind -> coarse category, populated when a Detector loads meta
 CATEGORIES["unknown"] = "anomaly"
@@ -84,18 +87,36 @@ def passes_threshold(kind, confidence, default, overrides=None):
 
 
 class Detector:
+    BACKENDS = ("auto", "onnx", "c")
+    backend = "onnx"
+
     def __init__(self, model_path=DEFAULT_MODEL, meta_path=DEFAULT_META,
-                 abstain_conf=None):
-        import onnxruntime as rt
-        if not os.path.exists(model_path):
-            sys.exit(f"[ERROR] model not found: {model_path}\n"
-                     f"        Run: python src/train_live_model.py")
+                 abstain_conf=None, backend="auto", header_path=DEFAULT_HEADER):
+        if backend not in self.BACKENDS:
+            raise ValueError(f"backend must be one of {', '.join(self.BACKENDS)}")
         with open(meta_path) as f:
             self.meta = json.load(f)
         self._validate_meta(self.meta)
-        self.sess = rt.InferenceSession(model_path)
-        self.input_name = self.sess.get_inputs()[0].name
         self.labels = {int(k): v for k, v in self.meta["labels"].items()}
+        if backend == "auto":
+            # onnxruntime has no 32-bit ARM wheels; fall back to the C export.
+            try:
+                import onnxruntime  # noqa: F401
+                backend = "onnx"
+            except ImportError:
+                backend = "c"
+        self.backend = backend
+        if backend == "onnx":
+            import onnxruntime as rt
+            if not os.path.exists(model_path):
+                sys.exit(f"[ERROR] model not found: {model_path}\n"
+                         f"        Run: python src/train_live_model.py")
+            self.sess = rt.InferenceSession(model_path)
+            self.input_name = self.sess.get_inputs()[0].name
+        else:
+            from c_backend import CModel
+            self.cmodel = CModel(header_path)
+            self._validate_c_model(self.cmodel, self.meta)
         self.categories = self.meta.get("categories", {})
         CATEGORIES.update(self.categories)
         if abstain_conf is not None and not 0.0 <= abstain_conf <= 1.0:
@@ -116,13 +137,31 @@ class Detector:
                 "feature semantics mismatch: retrain the model with the current "
                 "src/flow_features.py")
 
+    @staticmethod
+    def _validate_c_model(cmodel, meta):
+        """The C header is a separate export; refuse one that drifted from meta."""
+        expected = [meta["labels"][str(i)] for i in range(meta["num_class"])]
+        if (cmodel.n_features != len(FEATURE_NAMES)
+                or cmodel.contract_version != FEATURE_CONTRACT_VERSION
+                or cmodel.labels != expected):
+            raise ValueError(
+                "models/live_ids.h does not match live_meta.json: "
+                "re-export it with python src/export_c.py --verify")
+
+    def _run(self, X):
+        """Return (labels, probabilities) from whichever engine is loaded."""
+        if self.backend == "c":
+            return self.cmodel.predict(X)
+        out = self.sess.run(None, {self.input_name: X})
+        labels = np.asarray(out[0]).ravel().astype(int)
+        probs = np.asarray(out[1]) if len(out) > 1 else None
+        return labels, probs
+
     def classify(self, vectors):
         if not vectors:
             return []
         X = np.asarray(vectors, dtype=np.float32)
-        out = self.sess.run(None, {self.input_name: X})
-        labels = np.asarray(out[0]).ravel().astype(int)
-        probs = np.asarray(out[1]) if len(out) > 1 else None
+        labels, probs = self._run(X)
         res = []
         for i, lab in enumerate(labels):
             conf = float(probs[i][lab]) if probs is not None else 1.0
@@ -553,6 +592,10 @@ def main():
     g.add_argument("--iface", help="live: sniff an interface (needs root)")
     ap.add_argument("--model", default=DEFAULT_MODEL)
     ap.add_argument("--meta", default=DEFAULT_META)
+    ap.add_argument("--backend", default="auto", choices=Detector.BACKENDS,
+                    help="inference engine: onnx, c (models/live_ids.h via a "
+                         "compiled shared library), or auto = onnx when "
+                         "onnxruntime is installed, else c")
     ap.add_argument("--log", default=os.path.join(ROOT, "logs", "alerts.jsonl"))
     ap.add_argument("--syslog", default=None, metavar="HOST[:PORT]",
                     help="also send incidents to a SIEM over syslog/UDP "
@@ -612,7 +655,9 @@ def main():
     if args.abstain_conf is not None and not 0.0 <= args.abstain_conf <= 1.0:
         ap.error("--abstain-conf must be between 0 and 1")
 
-    det = Detector(args.model, args.meta, abstain_conf=args.abstain_conf)
+    det = Detector(args.model, args.meta, abstain_conf=args.abstain_conf,
+                   backend=args.backend)
+    print(CYA(f"[MODEL] inference backend: {det.backend}"))
     allowed_kinds = set(det.labels.values())
     try:
         class_min_conf = parse_class_thresholds(args.class_min_conf, allowed_kinds)

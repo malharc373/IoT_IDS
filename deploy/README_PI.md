@@ -72,6 +72,15 @@ to change the dashboard port: `sudo bash deploy/setup_pi.sh eth0 8080`.
 The installer consumes the exact transitive `deploy/requirements-pi.txt` lock;
 its reviewed direct inputs are kept in `deploy/requirements-pi.in`.
 
+**32-bit Pi (Pi 2, or any Pi on a 32-bit OS).** onnxruntime publishes no
+armv7l wheels, so the installer detects the architecture, installs `gcc` and
+`deploy/requirements-pi-armv7.txt` (numpy + scapy only), and the daemon runs
+the C export of the same model (`models/live_ids.h`, compiled on first use by
+`src/c_backend.py`). The smoke suite checks it against onnxruntime (identical
+labels, probabilities within 1e-5). Force an engine with
+`--backend onnx|c`. A 32-bit Pi is below the documented Pi 4 target; the
+benchmark labels such a run so it is not mistaken for the acceptance run.
+
 The same preflight can be run before installation or a demonstration:
 
 ```bash

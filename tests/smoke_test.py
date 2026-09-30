@@ -1369,6 +1369,57 @@ def t_detector_classify_known():
     assert "portscan" in kinds, kinds
 
 
+def t_c_backend_matches_onnx():
+    """The no-onnxruntime fallback (32-bit ARM) gives the same verdicts."""
+    import shutil
+    import numpy as np
+    import flow_features as ff
+    from ids_daemon import Detector
+    if not (shutil.which("gcc") or shutil.which("cc")):
+        raise SkipTest("no C compiler available")
+    onnx = Detector(backend="onnx")
+    native = Detector(backend="c")
+    rows = []
+    for kind in ("portscan", "synflood", "ssh_bruteforce", "benign"):
+        rows += [v for _, v in ff.features_from_pcap(_make_pcap(kind, 71235))]
+    rng = np.random.RandomState(0)
+    X = np.vstack([np.asarray(rows, dtype=np.float32)] +
+                  [rng.rand(200, 22).astype(np.float32) * scale
+                   for scale in (1, 100, 1e5)])
+    labels_o, probs_o = onnx._run(X)
+    labels_c, probs_c = native._run(X)
+    assert (labels_o == labels_c).all(), int((labels_o != labels_c).sum())
+    assert np.allclose(probs_o, probs_c, atol=1e-5), np.abs(probs_o - probs_c).max()
+    for (kind_o, conf_o), (kind_c, conf_c) in zip(onnx.classify(rows),
+                                                  native.classify(rows)):
+        assert kind_o == kind_c and abs(conf_o - conf_c) < 1e-5
+
+
+def t_c_backend_auto_fallback_and_drift_guard():
+    """auto picks C when onnxruntime is missing; a drifted header is refused."""
+    import shutil
+    from ids_daemon import Detector, DEFAULT_HEADER
+    if not (shutil.which("gcc") or shutil.which("cc")):
+        raise SkipTest("no C compiler available")
+    saved = sys.modules.get("onnxruntime")
+    sys.modules["onnxruntime"] = None       # import now raises ImportError
+    try:
+        assert Detector().backend == "c"
+    finally:
+        if saved is None:
+            sys.modules.pop("onnxruntime", None)
+        else:
+            sys.modules["onnxruntime"] = saved
+    stale = os.path.join(TMP, "stale_live_ids.h")
+    with open(DEFAULT_HEADER) as src, open(stale, "w") as dst:
+        dst.write(src.read().replace('"portscan"', '"port_scan"', 1))
+    try:
+        Detector(backend="c", header_path=stale)
+        raise AssertionError("header with drifted labels was accepted")
+    except ValueError as exc:
+        assert "does not match" in str(exc)
+
+
 def t_daemon_offline():
     from ids_daemon import Detector, AlertLog, run_offline
     det = Detector()
@@ -1918,6 +1969,8 @@ TESTS = [
         ("dashboard incremental reads", t_dashboard_incremental_and_rotation),
         ("alert log rotation", t_alert_log_rotation),
         ("detector classify known", t_detector_classify_known),
+        ("C backend matches ONNX", t_c_backend_matches_onnx),
+        ("C backend auto fallback + drift guard", t_c_backend_auto_fallback_and_drift_guard),
         ("daemon offline mode", t_daemon_offline),
         ("daemon replay mode", t_daemon_replay),
         ("daemon live path (scapy)", t_live_path),

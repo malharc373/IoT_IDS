@@ -67,6 +67,12 @@ RUNTIME_DEPS = (
 DEVELOPMENT_DEPS = ("sklearn", "xgboost", "pandas", "matplotlib")
 
 
+def _c_fallback_available() -> bool:
+    import shutil
+    return bool(shutil.which("gcc") or shutil.which("cc")) and os.path.isfile(
+        os.path.join(ROOT, "models", "live_ids.h"))
+
+
 def check_dependencies(runtime_only: bool) -> None:
     _section("2. Dependencies")
     for module_name, fix in RUNTIME_DEPS:
@@ -74,7 +80,13 @@ def check_dependencies(runtime_only: bool) -> None:
             module = importlib.import_module(module_name)
             _ok(module_name, str(getattr(module, "__version__", "installed")))
         except Exception as exc:
-            _fail(module_name, repr(exc), fix)
+            if module_name == "onnxruntime" and _c_fallback_available():
+                # No onnxruntime wheels exist for 32-bit ARM; the daemon then
+                # compiles models/live_ids.h instead (src/c_backend.py).
+                _warn(module_name, "not installed; the daemon will use the C "
+                      "backend (models/live_ids.h + C compiler)", fix)
+            else:
+                _fail(module_name, repr(exc), fix)
 
     if runtime_only:
         return
@@ -145,7 +157,8 @@ def check_pipeline() -> None:
         _fail("ONNX round-trip", f"expected one verdict, received {len(verdict)}")
         return
     label, confidence = verdict[0]
-    _ok("ONNX round-trip", f"{label}, confidence={confidence:.3f}")
+    _ok("ONNX round-trip",
+        f"{label}, confidence={confidence:.3f}, backend={detector.backend}")
 
 
 def check_generated_paths() -> None:

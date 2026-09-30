@@ -71,3 +71,6 @@ models/live_ids_booster.json
 # ── Secrets generated at runtime (never commit) ───────────────────────────────
 *.token
 dashboard.token
+
+# Compiled C inference fallback (src/c_backend.py), rebuilt on demand.
+build/

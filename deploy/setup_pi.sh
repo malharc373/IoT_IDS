@@ -50,10 +50,19 @@ echo "  interface : $IFACE"
 echo "  dashboard : port $DASH_PORT"
 echo "  user      : $RUN_USER"
 
+# onnxruntime has no 32-bit ARM wheels; there the daemon compiles the C export
+# of the same model (src/c_backend.py), which needs gcc instead.
+case "$(uname -m)" in
+    armv6l|armv7l) REQS="$REPO_DIR/deploy/requirements-pi-armv7.txt"; EXTRA_PKGS="gcc libopenblas0" ;;
+    *)             REQS="$REPO_DIR/deploy/requirements-pi.txt";       EXTRA_PKGS="" ;;
+esac
+echo "  runtime   : $(basename "$REQS")"
+
 echo "--- [1/4] system packages ---"
 if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update -y
-    sudo apt-get install -y python3-venv python3-pip libpcap0.8 tcpdump
+    # shellcheck disable=SC2086  # EXTRA_PKGS is intentionally word-split
+    sudo apt-get install -y python3-venv python3-pip libpcap0.8 tcpdump $EXTRA_PKGS
 else
     echo "  (apt-get not found — skipping; install python3-venv + libpcap manually)"
 fi
@@ -61,7 +70,7 @@ fi
 echo "--- [2/4] python venv + deps ---"
 [ -d "$VENV" ] || python3 -m venv "$VENV"
 "$PY" -m pip install --upgrade pip
-"$PY" -m pip install -r "$REPO_DIR/deploy/requirements-pi.txt"
+"$PY" -m pip install -r "$REQS"
 
 echo "--- [3/4] runtime, artifact, feature and inference preflight ---"
 "$PY" "$REPO_DIR/demo/preflight.py" --runtime-only --iface "$IFACE"

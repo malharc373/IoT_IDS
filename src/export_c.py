@@ -142,7 +142,15 @@ def generate_header(meta, df):
 #define IDS_NUM_TREES {len(roots)}
 #define IDS_NUM_NODES {len(nodes)}
 
-static const char *IDS_LABELS[IDS_NUM_CLASS] = {{ {", ".join('"%s"' % l for l in labels)} }};
+/* Callers use only part of this API (a sketch may never print a label), so
+ * mark it maybe-unused: gcc -Wall -Werror otherwise rejects the header. */
+#if defined(__GNUC__) || defined(__clang__)
+#define IDS_MAYBE_UNUSED __attribute__((unused))
+#else
+#define IDS_MAYBE_UNUSED
+#endif
+
+IDS_MAYBE_UNUSED static const char *const IDS_LABELS[IDS_NUM_CLASS] = {{ {", ".join('"%s"' % l for l in labels)} }};
 
 typedef struct {{ int feature; float value; int yes; int no; }} IdsNode;
 
@@ -160,7 +168,7 @@ static const unsigned char IDS_TREE_CLASS[IDS_NUM_TREES] = {{
  * RAW features (trees are scale-invariant), so there is nothing to normalise.
  * Returns the arg-max class id (softmax arg-max == raw-margin arg-max, and the
  * scalar base_score shifts every class equally so it cannot change it). */
-static int ids_predict_with_margin(const float *x, float *margin_out) {{
+IDS_MAYBE_UNUSED static int ids_predict_with_margin(const float *x, float *margin_out) {{
     int i, t, n, best, second;
     float score[IDS_NUM_CLASS];
     for (i = 0; i < IDS_NUM_CLASS; i++) score[i] = 0.0f;
@@ -182,7 +190,7 @@ static int ids_predict_with_margin(const float *x, float *margin_out) {{
 }}
 
 /* Backward-compatible class-only API. */
-static int ids_predict(const float *x) {{
+IDS_MAYBE_UNUSED static int ids_predict(const float *x) {{
     return ids_predict_with_margin(x, 0);
 }}
 

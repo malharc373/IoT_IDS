@@ -52,6 +52,10 @@ help stop network attacks on constrained edge hardware*:
 
 Alerts read `category/type`, e.g. `⚠ ATTACK recon/portscan src=… 593 dst-ports`.
 
+One command drives a running sensor with benign background traffic and every
+attack class in turn, for a live demo — `sudo python attacks/live_demo.py`
+(loopback by default; see [`attacks/README.md`](attacks/README.md)).
+
 ---
 
 ## Quickstart (dev machine, no root)
@@ -171,6 +175,9 @@ sudo .venv/bin/python src/ids_daemon.py --iface eth0 --prevent --allow 192.168.1
 ```
 
 Launch attacks from another LAN host — see **[attacks/README.md](attacks/README.md)**.
+
+For the live presentation, follow the one-page
+**[deploy/DEMO_RUNBOOK.md](deploy/DEMO_RUNBOOK.md)**.
 
 ---
 
@@ -335,6 +342,9 @@ src/
   export_c.py          compile the model to a dependency-free C header (MCUs)
 attacks/
   traffic_gen.py       scapy generators: benign family + 9 attack types
+  live_demo.py         one-command live demo: benign + every attack class
+                       against a running sensor (loopback-safe by default)
+  slowloris.py         bundled held-open-HTTP attack used by the live demo
   build_corpus.py      synth traffic → labeled flow dataset (attacks mixed
                        with benign background; scenario provenance recorded)
   README.md            synthetic pcaps + real-tool (nmap/hping3/…) equivalents

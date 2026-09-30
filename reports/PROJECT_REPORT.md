@@ -107,7 +107,8 @@ allows initiator inference. A capture beginning midstream without a handshake
 cannot prove the original initiator, so first observed sender remains an
 explicit fallback.
 
-The parser supports Ethernet, VLAN, QinQ, IPv4, IPv6, TCP, UDP, and ICMP.
+The parser supports Ethernet, Linux cooked SLL/SLL2, radiotap data frames,
+VLAN, QinQ, IPv4, IPv6, TCP, UDP, and ICMP.
 Classic pcap microsecond and nanosecond timestamp formats are distinguished.
 Unsupported link types are rejected instead of being decoded as Ethernet.
 Non-initial IP fragments are ignored because their payload does not carry a
@@ -280,7 +281,8 @@ be archived together for the next academic result set.
 - Raspberry Pi throughput, packet loss, thermal behavior, and long-run memory
   stability are unmeasured.
 - Midstream flow direction is necessarily heuristic without a handshake.
-- Unsupported capture link types fail safely but are not yet decoded.
+- Ethernet, Linux cooked SLL/SLL2, and radiotap data frames are decoded;
+  other capture link types fail safely.
 - Python lock versions are exact, but wheel hashes remain unpinned.
 - Abstention, per-class thresholds, and the MCU margin are implemented control
   surfaces, but their operating values remain unvalidated on deployment traffic.
@@ -297,12 +299,12 @@ be archived together for the next academic result set.
 | P0 | Remount datasets and rerun corrected NxN, LODO, and threshold-transfer studies | Raw result bundle, no train/eval overlap, quality report, reproducible commit |
 | P0 | Capture real labelled traffic through the live 22-feature extractor | Grouped device/scenario/time split and per-class error analysis |
 | P1 | Benchmark and soak on Raspberry Pi | Raw benchmark, packet-drop counters, temperature, RSS, incident latency |
-| P1 | Decide how the research and live feature spaces should converge | Written ADR plus validated adapter or continued separation |
+| Done | Keep research and live feature spaces separate | `docs/ADR-001-FEATURE-SPACES.md`; versioned contracts and daemon rejection tests |
 | P1 | Owner selects a license compatible with code, report, model, and third-party assets | Explicit license file and compatibility review |
-| P2 | Add supported Linux cooked and radiotap capture decoders | Format fixtures and parser parity tests |
+| Done | Add supported Linux cooked and radiotap capture decoders | Format fixtures and parser parity tests |
 | P2 | Evaluate drift, adversarial traffic, calibration, and abstention | Pre-registered protocol and independent holdout |
-| P2 | Extend static typing from the live core to research/data scripts | mypy-clean research modules and unchanged behavioral suite |
-| P2 | Add signed release artifacts and a checksum manifest | Reproducible release job, signatures, and verification instructions |
+| Done | Extend static typing from the live core to research/data scripts | Eleven mypy-clean modules and unchanged behavioral suite |
+| Done | Add signed release artifacts and a checksum manifest | Reproducible bundle, SHA-256 manifest, and GitHub provenance attestation workflow |
 
 ## Conclusion
 

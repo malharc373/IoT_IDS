@@ -262,6 +262,26 @@ extracted unless a trusted digest is supplied, for example
 `--allow-unverified`. The script prints the observed SHA-256 for independent
 verification. Kaggle archives are also routed through the safe extractor.
 
+### Reproducible release evidence
+
+Build the same deterministic capstone bundle produced by the release workflow:
+
+```bash
+python tools/build_release.py
+(cd dist && shasum -a 256 -c SHA256SUMS)
+```
+
+Manual and tagged release workflows upload the bundle and checksum manifest and
+issue a GitHub build-provenance attestation. After downloading the artifact:
+
+```bash
+gh attestation verify dist/iot-ids-capstone.tar.gz \
+  --repo malharc373/IoT_IDS
+```
+
+Tagged runs additionally create the matching GitHub release. The workflow pins
+every third-party Action to a full commit SHA.
+
 ---
 
 ## Repository layout
@@ -311,6 +331,8 @@ models/
   README.md            artifact manifest + research/runtime separation
 tests/
   smoke_test.py        regression checks over every module/script
+tools/
+  build_release.py     deterministic evidence bundle + SHA-256 manifest
 .env.example           optional configuration template (copy to .env)
 ```
 
@@ -320,7 +342,7 @@ tests/
 
 Each bidirectional flow is summarised by **22 features** (`src/flow_features.py`
 — IPv4 and IPv6, VLAN/QinQ-aware, TCP teardown-aware, reads both pcap and
-pcapng):
+pcapng, including Ethernet, Linux cooked SLL/SLL2, and radiotap data frames):
 protocol, duration, packet/byte counts and rates, packet-size and inter-arrival
 statistics, TCP flag ratios, forward/backward asymmetry, the target **service
 port**, plus **host-context** features (distinct destination ports and IPs per

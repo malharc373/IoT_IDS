@@ -39,6 +39,15 @@ ETH_IPV6 = 0x86DD
 ETH_VLAN = 0x8100
 ETH_QINQ = 0x88A8
 LINKTYPE_ETHERNET = 1
+LINKTYPE_LINUX_SLL = 113
+LINKTYPE_IEEE802_11_RADIO = 127
+LINKTYPE_LINUX_SLL2 = 276
+SUPPORTED_LINKTYPES = {
+    LINKTYPE_ETHERNET,
+    LINKTYPE_LINUX_SLL,
+    LINKTYPE_IEEE802_11_RADIO,
+    LINKTYPE_LINUX_SLL2,
+}
 
 # IPv6 extension headers to walk past to reach the transport header
 _V6_EXT = {0, 43, 44, 51, 60, 135}   # hop-by-hop, routing, fragment, AH, dstopts, mobility
@@ -235,6 +244,72 @@ PCAP_MAGICS = {0xA1B2C3D4, 0xA1B23C4D, 0xD4C3B2A1, 0x4D3CB2A1}
 PCAPNG_SHB = 0x0A0D0D0A
 
 
+def _normalize_link_frame(raw: bytes, linktype: int) -> bytes:
+    """Convert supported capture link layers to an Ethernet-shaped frame.
+
+    The feature parser intentionally consumes one stable representation. Linux
+    ``any`` captures (SLL/SLL2) and monitor-mode radiotap captures therefore
+    have their link header replaced by a synthetic Ethernet header while the
+    original on-wire length remains available separately to the caller.
+    """
+    if linktype == LINKTYPE_ETHERNET:
+        return raw
+
+    if linktype == LINKTYPE_LINUX_SLL:
+        if len(raw) < 16:
+            return b""
+        eth_type = struct.unpack("!H", raw[14:16])[0]
+        payload = raw[16:]
+    elif linktype == LINKTYPE_LINUX_SLL2:
+        if len(raw) < 20:
+            return b""
+        eth_type = struct.unpack("!H", raw[0:2])[0]
+        payload = raw[20:]
+    elif linktype == LINKTYPE_IEEE802_11_RADIO:
+        if len(raw) < 8:
+            return b""
+        radiotap_len = struct.unpack("<H", raw[2:4])[0]
+        if radiotap_len < 8 or len(raw) < radiotap_len + 24:
+            return b""
+        frame = raw[radiotap_len:]
+        frame_control = struct.unpack("<H", frame[0:2])[0]
+        frame_type = (frame_control >> 2) & 0x3
+        subtype = (frame_control >> 4) & 0xF
+        if frame_type != 2:  # only 802.11 data frames carry IP payloads
+            return b""
+        header_len = 24
+        if frame_control & 0x0100 and frame_control & 0x0200:  # WDS addr4
+            header_len += 6
+        if subtype & 0x08:  # QoS data control field
+            header_len += 2
+        if len(frame) < header_len + 8:
+            return b""
+        llc = frame[header_len:]
+        if llc[:6] != b"\xaa\xaa\x03\x00\x00\x00":
+            return b""
+        eth_type = struct.unpack("!H", llc[6:8])[0]
+        payload = llc[8:]
+    else:
+        raise ValueError(f"unsupported capture link type {linktype}")
+
+    return b"\x00" * 12 + struct.pack("!H", eth_type) + payload
+
+
+def _require_supported_linktype(filename: str, linktype: int, kind: str) -> None:
+    if linktype not in SUPPORTED_LINKTYPES:
+        supported = ", ".join(str(value) for value in sorted(SUPPORTED_LINKTYPES))
+        raise ValueError(
+            f"{filename}: unsupported {kind} link type {linktype}; "
+            f"supported link types are {supported} "
+            "(Ethernet, Linux SLL/SLL2, and radiotap data frames)"
+        )
+
+
+def _normalized_orig_len(packet: bytes, cap_len: int, orig_len: int) -> int:
+    """Translate the captured original length to the normalized link layer."""
+    return len(packet) + max(orig_len - cap_len, 0)
+
+
 def read_pcapng(filename: str) -> List[tuple]:
     """Return (ts, raw_bytes, orig_len) from a pcapng file.
 
@@ -301,12 +376,11 @@ def read_pcapng(filename: str) -> List[tuple]:
                 if iid >= len(ifaces):
                     raise ValueError(f"{filename}: packet references unknown interface {iid}")
                 linktype, _snaplen, divisor = ifaces[iid]
-                if linktype != LINKTYPE_ETHERNET:
-                    raise ValueError(
-                        f"{filename}: unsupported pcapng link type {linktype}; "
-                        "only Ethernet (DLT_EN10MB/LINKTYPE_ETHERNET) is supported")
+                _require_supported_linktype(filename, linktype, "pcapng")
                 ts = ((ts_hi << 32) | ts_lo) / divisor
-                out.append((ts, body[20:20 + cap_len], orig_len))
+                packet = _normalize_link_frame(body[20:20 + cap_len], linktype)
+                if packet:
+                    out.append((ts, packet, _normalized_orig_len(packet, cap_len, orig_len)))
 
             elif btype == 0x00000003:       # Simple Packet Block (no timestamp)
                 if len(body) < 4:
@@ -315,12 +389,12 @@ def read_pcapng(filename: str) -> List[tuple]:
                 if not ifaces:
                     raise ValueError(f"{filename}: simple packet block has no interface")
                 linktype, snaplen, _divisor = ifaces[0]
-                if linktype != LINKTYPE_ETHERNET:
-                    raise ValueError(
-                        f"{filename}: unsupported pcapng link type {linktype}; "
-                        "only Ethernet (DLT_EN10MB/LINKTYPE_ETHERNET) is supported")
+                _require_supported_linktype(filename, linktype, "pcapng")
                 cap_len = min(orig_len, snaplen) if snaplen else orig_len
-                out.append((0.0, body[4:4 + cap_len], orig_len))
+                packet = _normalize_link_frame(body[4:4 + cap_len], linktype)
+                if packet:
+                    out.append((
+                        0.0, packet, _normalized_orig_len(packet, cap_len, orig_len)))
     return out
 
 
@@ -346,10 +420,7 @@ def read_pcap(filename: str) -> List[tuple]:
         endian = "<" if magic in (0xA1B2C3D4, 0xA1B23C4D) else ">"
         ts_divisor = 1e9 if magic in (0xA1B23C4D, 0x4D3CB2A1) else 1e6
         linktype = struct.unpack(endian + "I", hdr[20:24])[0]
-        if linktype != LINKTYPE_ETHERNET:
-            raise ValueError(
-                f"{filename}: unsupported pcap link type {linktype}; only "
-                "Ethernet (DLT_EN10MB/LINKTYPE_ETHERNET) is supported")
+        _require_supported_linktype(filename, linktype, "pcap")
         while True:
             rec = f.read(16)
             if len(rec) < 16:
@@ -361,7 +432,13 @@ def read_pcap(filename: str) -> List[tuple]:
             # orig_len is the on-the-wire length; incl_len is what the snaplen
             # let through. Callers need the former or every length-derived
             # feature shrinks silently on a snaplen'd capture (F16).
-            out.append((ts_sec + ts_usec / ts_divisor, raw, orig_len))
+            packet = _normalize_link_frame(raw, linktype)
+            if packet:
+                out.append((
+                    ts_sec + ts_usec / ts_divisor,
+                    packet,
+                    _normalized_orig_len(packet, incl_len, orig_len),
+                ))
     return out
 
 

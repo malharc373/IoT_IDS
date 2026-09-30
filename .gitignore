@@ -50,6 +50,7 @@ results/sample_dataset.pkl
 logs/
 demo/results/*_flows.csv
 tmp/
+dist/
 
 # ── Large / regenerable model artifacts ───────────────────────────────────────
 *.pkl

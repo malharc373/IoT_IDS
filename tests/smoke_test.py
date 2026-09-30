@@ -220,7 +220,7 @@ def t_pcapng_reader():
 
 
 def t_classic_pcap_resolution_and_linktype():
-    """Classic pcap honours ns magic and rejects non-Ethernet captures."""
+    """Classic pcap honours ns magic and rejects unknown link types."""
     import struct as _struct
     import flow_features as ff
     from scapy.all import Ether, IP, TCP
@@ -242,13 +242,49 @@ def t_classic_pcap_resolution_and_linktype():
     rows = ff.read_pcap(ns)
     assert abs((rows[1][0] - rows[0][0]) - 0.1) < 1e-9, rows
 
-    sll = os.path.join(TMP, "linux-cooked.pcap")
-    write(sll, b"\xd4\xc3\xb2\xa1", [(100, 0)], linktype=113)
+    unknown = os.path.join(TMP, "unknown-linktype.pcap")
+    write(unknown, b"\xd4\xc3\xb2\xa1", [(100, 0)], linktype=999)
     try:
-        ff.read_pcap(sll)
-        raise AssertionError("Linux cooked capture was parsed as Ethernet")
+        ff.read_pcap(unknown)
+        raise AssertionError("unknown link type was accepted")
     except ValueError as e:
-        assert "unsupported pcap link type 113" in str(e)
+        assert "unsupported pcap link type 999" in str(e)
+
+
+def t_capture_linktype_decoders():
+    """Linux cooked and radiotap captures normalize to identical IP flows."""
+    import struct as _struct
+    import flow_features as ff
+    from scapy.all import IP, TCP
+
+    ip = bytes(IP(src="10.1.2.3", dst="10.9.8.7") /
+               TCP(sport=12345, dport=443, flags="S"))
+
+    def write(path, linktype, frame):
+        header = b"\xd4\xc3\xb2\xa1" + _struct.pack(
+            "<HHiiii", 2, 4, 0, 0, 65535, linktype)
+        record = _struct.pack("<IIII", 100, 0, len(frame), len(frame)) + frame
+        with open(path, "wb") as f:
+            f.write(header + record)
+
+    frames = {
+        113: _struct.pack("!HHH8sH", 0, 1, 6, b"\x00" * 8, 0x0800) + ip,
+        276: _struct.pack("!H", 0x0800) + b"\x00\x00" +
+             _struct.pack("!IHB", 1, 1, 0) + b"\x06" + b"\x00" * 8 + ip,
+        127: (b"\x00\x00\x08\x00\x00\x00\x00\x00" +
+              b"\x08\x00\x00\x00" + b"\x00" * 20 +
+              b"\xaa\xaa\x03\x00\x00\x00\x08\x00" + ip),
+    }
+    for linktype, frame in frames.items():
+        path = os.path.join(TMP, f"link-{linktype}.pcap")
+        write(path, linktype, frame)
+        rows = ff.read_pcap(path)
+        assert len(rows) == 1, (linktype, rows)
+        assert rows[0][2] == len(rows[0][1]), (linktype, rows[0][2], len(rows[0][1]))
+        pkt = ff.parse_raw(rows[0][1], rows[0][2])
+        assert pkt is not None
+        assert (pkt["src_ip"], pkt["dst_ip"], pkt["dst_port"]) == (
+            "10.1.2.3", "10.9.8.7", 443)
 
 
 def t_flow_direction_is_initiator_relative():
@@ -1811,6 +1847,30 @@ def t_systemd_unit_sane():
     assert "iot-ids-dashboard.service" in setup and "enable iot-ids.service iot-ids-dashboard.service" in setup
 
 
+def t_release_bundle_is_deterministic():
+    """Release evidence has stable bytes and a valid checksum manifest."""
+    import hashlib
+    import importlib.util
+    import pathlib
+    import shutil
+
+    path = os.path.join(ROOT, "tools", "build_release.py")
+    spec = importlib.util.spec_from_file_location("build_release", path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    bundle, manifest = module.build()
+    first = pathlib.Path(bundle).read_bytes()
+    module.build()
+    second = pathlib.Path(bundle).read_bytes()
+    assert first == second, "release archive is not reproducible"
+    expected, name = pathlib.Path(manifest).read_text().strip().split()
+    assert name == pathlib.Path(bundle).name
+    assert hashlib.sha256(second).hexdigest() == expected
+    shutil.rmtree(pathlib.Path(bundle).parent)
+
+
 TESTS = [
         ("imports", t_imports),
         ("requirements importable", t_requirements_importable),
@@ -1819,6 +1879,7 @@ TESTS = [
         ("parse ipv6 / vlan / snaplen", t_parse_ipv6_vlan_snaplen),
         ("pcapng reader", t_pcapng_reader),
         ("classic pcap resolution + linktype", t_classic_pcap_resolution_and_linktype),
+        ("capture linktype decoders", t_capture_linktype_decoders),
         ("flow direction is initiator-relative", t_flow_direction_is_initiator_relative),
         ("fragment parsing is safe", t_fragment_parsing_is_safe),
         ("tcp teardown splits flows", t_tcp_teardown_splits_flows),
@@ -1879,7 +1940,8 @@ TESTS = [
         ("current claims are evidence scoped", t_current_claims_are_evidence_scoped),
         ("repository governance contract", t_repository_governance_contract),
         ("repository metadata absent", t_repository_metadata_absent),
-        ("systemd unit sane", t_systemd_unit_sane),]
+        ("systemd unit sane", t_systemd_unit_sane),
+        ("release bundle deterministic", t_release_bundle_is_deterministic),]
 
 
 def main():

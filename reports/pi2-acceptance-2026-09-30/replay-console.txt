@@ -1,0 +1,90 @@
+[MODEL] inference backend: c
+
+[*] Replay (live-style): data/pcaps/demo_mixed.pcap  window=60.0s step=1.0s min_conf=0.5
+  [t+   1.0s]  ⚠ ATTACK dos/mqtt_flood                 src=192.168.1.4     TCP     95 flows     1 dst-ports    1 dst-ips     380 pkts  conf~1.00
+  [t+   2.0s]  ⚠ ATTACK dos/mqtt_flood                 src=192.168.1.4     TCP    182 flows     1 dst-ports    1 dst-ips     728 pkts  conf~1.00
+  [t+   2.0s]  ⚠ ATTACK recon/xmas_scan                src=192.168.1.221   TCP    148 flows   148 dst-ports    1 dst-ips     166 pkts  conf~1.00
+  [t+   2.0s]  ⚠ ATTACK botnet/mirai                   src=192.168.1.13    TCP    137 flows     1 dst-ports  137 dst-ips     179 pkts  conf~1.00
+  [t+   2.0s]  ⚠ ATTACK recon/xmas_scan                src=192.168.1.201   TCP     21 flows     1 dst-ports    1 dst-ips      62 pkts  conf~0.89
+  [t+   3.0s]  ⚠ ATTACK dos/udpflood                   src=192.168.1.107   UDP    956 flows     1 dst-ports    1 dst-ips     963 pkts  conf~1.00
+  [t+   3.0s]  ⚠ ATTACK recon/xmas_scan                src=192.168.1.221   TCP    461 flows   461 dst-ports    1 dst-ips     524 pkts  conf~1.00
+  [t+   3.0s]  ⚠ ATTACK dos/mqtt_flood                 src=192.168.1.4     TCP    276 flows     1 dst-ports    1 dst-ips    1108 pkts  conf~1.00
+  [t+   3.0s]  ⚠ ATTACK botnet/mirai                   src=192.168.1.13    TCP    232 flows     1 dst-ports  232 dst-ips     303 pkts  conf~1.00
+  [t+   3.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.105   TCP     43 flows     1 dst-ports    1 dst-ips      43 pkts  conf~1.00
+  [t+   3.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.101   TCP     42 flows     1 dst-ports    1 dst-ips      42 pkts  conf~1.00
+  [t+   3.0s]  ⚠ ATTACK recon/xmas_scan                src=192.168.1.201   TCP     41 flows     1 dst-ports    1 dst-ips     123 pkts  conf~0.90
+  [t+   3.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.6     TCP     35 flows     1 dst-ports    1 dst-ips      35 pkts  conf~1.00
+  [t+   3.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.207   TCP     34 flows     1 dst-ports    1 dst-ips      34 pkts  conf~1.00
+  [t+   3.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.66    ICMP     1 flows     1 dst-ports    1 dst-ips      29 pkts  conf~1.00
+  [t+   3.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.4     TCP      1 flows     1 dst-ports    1 dst-ips       1 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/udpflood                   src=192.168.1.107   UDP   1480 flows     1 dst-ports    1 dst-ips    1497 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.101   TCP    242 flows     1 dst-ports    1 dst-ips     243 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.105   TCP    240 flows     1 dst-ports    1 dst-ips     240 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.207   TCP    229 flows     1 dst-ports    1 dst-ips     229 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.6     TCP    221 flows     1 dst-ports    1 dst-ips     221 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK recon/portscan                 src=192.168.1.24    TCP     19 flows    19 dst-ports    1 dst-ips      38 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.164   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.88    ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.209   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.86    ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.187   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.87    ICMP     1 flows     1 dst-ports    1 dst-ips     142 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.46    ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.233   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.21    ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.49    ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.182   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.78    ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.251   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.226   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.161   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.148   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.217   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.17    ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.228   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.93    ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/icmpflood                  src=192.168.1.125   ICMP     1 flows     1 dst-ports    1 dst-ips      71 pkts  conf~1.00
+  [t+   4.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.24    TCP      1 flows     1 dst-ports    1 dst-ips       1 pkts  conf~1.00
+  [t+   5.0s]  ⚠ ATTACK dos/mqtt_flood                 src=192.168.1.4     TCP    465 flows     1 dst-ports    1 dst-ips    1876 pkts  conf~1.00
+  [t+   5.0s]  ⚠ ATTACK botnet/mirai                   src=192.168.1.13    TCP    391 flows     1 dst-ports  391 dst-ips     510 pkts  conf~1.00
+  [t+   5.0s]  ⚠ ATTACK recon/portscan                 src=192.168.1.24    TCP    348 flows   348 dst-ports    1 dst-ips     696 pkts  conf~1.00
+  [t+   5.0s]  ⚠ ATTACK bruteforce/ssh_bruteforce      src=192.168.1.94    TCP      4 flows     1 dst-ports    1 dst-ips      25 pkts  conf~0.85
+  [t+   5.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.4     TCP      2 flows     1 dst-ports    1 dst-ips       3 pkts  conf~0.78
+  [t+   6.0s]  ⚠ ATTACK recon/portscan                 src=192.168.1.24    TCP    591 flows   591 dst-ports    1 dst-ips    1182 pkts  conf~1.00
+  [t+   6.0s]  ⚠ ATTACK bruteforce/ssh_bruteforce      src=192.168.1.94    TCP     15 flows     1 dst-ports    1 dst-ips     105 pkts  conf~0.86
+  [t+   7.0s]  ⚠ ATTACK bruteforce/ssh_bruteforce      src=192.168.1.94    TCP     25 flows     1 dst-ports    1 dst-ips     175 pkts  conf~1.00
+  [t+   7.0s]  ⚠ ATTACK dos/slowloris                  src=192.168.1.201   TCP      3 flows     1 dst-ports    1 dst-ips      15 pkts  conf~1.00
+  [t+   8.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.63    TCP      1 flows     1 dst-ports    1 dst-ips       1 pkts  conf~0.89
+  [t+   9.0s]  ⚠ ATTACK bruteforce/ssh_bruteforce      src=192.168.1.94    TCP     48 flows     1 dst-ports    1 dst-ips     333 pkts  conf~1.00
+  [t+   9.0s]  ⚠ ATTACK dos/slowloris                  src=192.168.1.201   TCP      8 flows     1 dst-ports    1 dst-ips      40 pkts  conf~1.00
+  [t+  10.0s]  ⚠ ATTACK dos/slowloris                  src=192.168.1.201   TCP     13 flows     1 dst-ports    1 dst-ips      65 pkts  conf~1.00
+  [t+  10.0s]  ⚠ ATTACK recon/xmas_scan                src=192.168.1.94    TCP      1 flows     1 dst-ports    1 dst-ips       3 pkts  conf~0.82
+  [t+  11.0s]  ⚠ ATTACK dos/mqtt_flood                 src=192.168.1.201   TCP      1 flows     1 dst-ports    1 dst-ips       4 pkts  conf~0.82
+  [t+  11.0s]  ⚠ ATTACK recon/xmas_scan                src=192.168.1.207   TCP      1 flows     1 dst-ports    1 dst-ips       1 pkts  conf~0.91
+  [t+  12.0s]  ⚠ ATTACK bruteforce/ssh_bruteforce      src=192.168.1.94    TCP     83 flows     1 dst-ports    1 dst-ips     581 pkts  conf~1.00
+  [t+  12.0s]  ⚠ ATTACK dos/slowloris                  src=192.168.1.201   TCP     23 flows     1 dst-ports    1 dst-ips     115 pkts  conf~1.00
+  [t+  12.0s]  ⚠ ATTACK recon/xmas_scan                src=192.168.1.94    TCP      1 flows     1 dst-ports    1 dst-ips       2 pkts  conf~0.69
+  [t+  13.0s]  ⚠ ATTACK dos/mqtt_flood                 src=192.168.1.201   TCP      1 flows     1 dst-ports    1 dst-ips       4 pkts  conf~0.84
+  [t+  13.0s]  ⚠ ATTACK dos/synflood                   src=192.168.1.94    TCP      1 flows     1 dst-ports    1 dst-ips       1 pkts  conf~1.00
+  [t+  15.1s]  ⚠ ATTACK dos/slowloris                  src=192.168.1.201   TCP     40 flows     1 dst-ports    1 dst-ips     206 pkts  conf~1.00
+  [t+  15.1s]  ⚠ ATTACK dos/mqtt_flood                 src=192.168.1.201   TCP      1 flows     1 dst-ports    1 dst-ips       4 pkts  conf~0.84
+
+================================================================
+  DETECTION SUMMARY
+================================================================
+  Packets parsed     : 17,850
+  Flows classified   : 4,674
+  Benign flows       : 101
+  Attack flows       : 4,573
+  Incidents (src×type): 33
+       • icmpflood        22 source(s), 22 flows
+       • synflood         4 source(s), 932 flows
+       • mqtt_flood       1 source(s), 504 flows
+       • mirai            1 source(s), 391 flows
+       • slowloris        1 source(s), 45 flows
+       • xmas_scan        1 source(s), 494 flows
+       • udpflood         1 source(s), 1,480 flows
+       • portscan         1 source(s), 591 flows
+       • ssh_bruteforce   1 source(s), 114 flows
+================================================================
+  [cache] scored=16,546 reused=266,146 (94% cached)

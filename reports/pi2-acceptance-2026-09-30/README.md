@@ -92,7 +92,7 @@ was kept on the Pi under `acceptance/features/`.
 | 13 | All 10 traffic generators run on the Pi | PASS |
 | 14 | `--backend c` works; `--backend onnx` fails cleanly | PASS |
 
-The replay on the Pi ([`replay.log`](replay.log)) gives the same totals as
+The replay on the Pi ([`replay-console.txt`](replay-console.txt)) gives the same totals as
 the Mac: 17,850 packets, 4,674 flows, 4,573 attack and 101 benign, 33
 incidents. The demo capture was generated on the Mac (its generator imports
 pandas) and copied over; its SHA-256 is in `identity.txt`.

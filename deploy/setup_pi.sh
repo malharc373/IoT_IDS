@@ -61,8 +61,15 @@ echo "  runtime   : $(basename "$REQS")"
 echo "--- [1/4] system packages ---"
 if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update -y
+    # Debian 13 (trixie, current Raspberry Pi OS) renamed the runtime library
+    # to libpcap0.8t64 in the 64-bit time_t transition; older releases keep
+    # the original name.
+    PCAP_PKG=libpcap0.8
+    if apt-cache show libpcap0.8t64 >/dev/null 2>&1; then
+        PCAP_PKG=libpcap0.8t64
+    fi
     # shellcheck disable=SC2086  # EXTRA_PKGS is intentionally word-split
-    sudo apt-get install -y python3-venv python3-pip libpcap0.8 tcpdump $EXTRA_PKGS
+    sudo apt-get install -y python3-venv python3-pip "$PCAP_PKG" tcpdump $EXTRA_PKGS
 else
     echo "  (apt-get not found — skipping; install python3-venv + libpcap manually)"
 fi

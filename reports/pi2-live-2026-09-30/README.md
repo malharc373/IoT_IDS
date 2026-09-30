@@ -97,13 +97,17 @@ of §2 turn directly into throttles and blocks of normal devices, including
 the gateway. **The IPS is not safe to enable on a real network with this
 model.** Keep it in dry-run until false alarms are addressed.
 
-Defects found, not yet fixed:
+Defects found in this run (both addressed after it, in PR #10; the fixes have
+unit tests but have not been re-run in enforce mode on the Pi):
 
 - When a throttle or block expires, `ips_response.py` deletes the nftables
   element the kernel has already removed and logs `backend cmd failed` for
   each one. Harmless, noisy.
 - `0.0.0.0` (a DHCP client's source) can be throttled; unspecified,
   link-local and multicast sources should never be enforcement targets.
+  The one innocent device that was blocked (`fe80::…`) was link-local.
+  Replaying this run's recorded actions through the new rule removes 7 of
+  the 12 innocent sources; the router and four other IPv4 hosts remain.
 
 ## 5. Soak
 

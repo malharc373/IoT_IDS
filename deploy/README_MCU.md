@@ -1,5 +1,20 @@
 # Running the model on a microcontroller (ESP32-class)
 
+> **Status (30 September 2026): inference kernel only.** The model compiles to
+> C and runs, but there is no ESP32 intrusion detector yet. What exists and
+> what does not:
+>
+> | Piece | State |
+> |---|---|
+> | C export of the model, decision parity with XGBoost | done (`src/export_c.py --verify`) |
+> | Same C code on real ARM hardware | done: it is the default inference engine on the 32-bit Raspberry Pi 2 |
+> | Arduino example sketch (`esp32_iot_ids/`) | written; **not yet compiled with the ESP32 toolchain or flashed** |
+> | On-device flow table and 22-feature extraction in C | **not started**; the sketch feeds zeros |
+> | Packet capture on the ESP32 | **not started**; see *Placement* below |
+> | Accuracy, latency or memory measured on an ESP32 | **none** |
+>
+> On-device detection is targeted for the final project review (October 2026).
+
 For devices too small for a Python/ONNX runtime, the model compiles to a single
 dependency-free C header, `models/live_ids.h`:
 
@@ -7,10 +22,14 @@ dependency-free C header, `models/live_ids.h`:
 python src/export_c.py --verify   # regenerate + check 100% parity vs XGBoost
 ```
 
-Footprint: ~43 KB of `const` tree data in flash, ~130 bytes of RAM at inference,
-no libc math required. Fits comfortably on an ESP32 (4 MB flash / 520 KB RAM);
-too large for tiny AVR Arduinos (train a smaller model for those — fewer
-estimators / lower depth in `src/train_live_model.py`).
+Footprint, measured from an `-Os` build on the development host: about 49 KB
+of `const` data (a 43 KB node table of 2,780 nodes plus a 6 KB index for the
+1,200 trees), about 240 B of code, an estimated stack of about 130 bytes, no
+heap, and no libc math. The type sizes are the same on an ESP32, so the constant data should
+be the same size there, but nothing has been built for the chip yet. That fits
+an ESP32 (4 MB flash / 520 KB RAM) with room to spare. It is too large for small
+AVR Arduinos; train a smaller model for those (fewer estimators or lower depth
+in `src/train_live_model.py`).
 
 ## Usage
 
@@ -43,6 +62,35 @@ An Arduino/PlatformIO example is provided at
 into that sketch directory, replace the sample feature acquisition function
 with your flow counter, and flash it. The example prints the predicted class
 and raw score margin over Serial without enabling any enforcement action.
+
+As shipped it passes an all-zero feature vector, which the model classifies as
+`icmpflood`. That output only proves the call path works; it is not a
+detection. The sketch has not been compiled for the ESP32 yet.
+
+## Placement: what an ESP32 can actually see
+
+The model was trained on bidirectional IP flows. An ESP32 can only compute
+those flows for traffic that passes through it:
+
+- **Inline (recommended):** the ESP32 is the Wi-Fi access point or a bridge the
+  IoT devices use, so their IP traffic crosses it. It can then build the same
+  flows the model expects.
+- **Passive Wi-Fi sniffing:** promiscuous mode sees 802.11 frames on one channel
+  and cannot see a switched wired LAN. The features would differ from the
+  training data, so this needs a new feature set and a retrained model.
+
+## Remaining work for an ESP32 detector
+
+1. Choose the placement above (inline keeps the current model valid).
+2. Port the flow table and the 22 features of `src/flow_features.py` to C, and
+   test it against the Python version on the same capture.
+3. Add the capture path (ESP-IDF netif hook for inline, or the Wi-Fi
+   promiscuous callback).
+4. Feed real features to `ids_predict_with_margin`, and report attacks over
+   Serial, GPIO or MQTT.
+5. Measure on the board: agreement with the Pi and host, latency, RAM, flows
+   per second.
+6. If memory or latency is tight, train and export a smaller model.
 
 ## Notes
 

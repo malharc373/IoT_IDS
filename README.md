@@ -18,7 +18,8 @@ help stop network attacks on constrained edge hardware*:
    incidents, and includes an experimental response module. Active blocking is
    deliberately disabled on real networks because the first live baseline
    produced unsafe false positives. The same model also compiles to a
-   **dependency-free C header** for microcontrollers.
+   **dependency-free C header** for microcontrollers (inference only so far;
+   see *Scope and status*).
 
 2. **SFAF cross-dataset study** — eleven public IDS datasets (CICIDS2017,
    UNSW-NB15, TON-IoT, Bot-IoT, CIC-IoT-2023, CICDDoS2019, IoTID20, X-IIoTID,
@@ -37,9 +38,100 @@ help stop network attacks on constrained edge hardware*:
    │                                      ↳ dry-run response; enforcement gated  │
    └────────────────────────────────────────────────────────────────────────────┘
        ▲ Mac / dev : synthetic labeled pcaps        (root-free demo)
-       ▲ Pi  / live: scapy sniff on eth0 / wlan0    (systemd service, IPS)
-       ▲ MCU       : models/live_ids.h              (no runtime, ~43 KB const)
+       ▲ Pi  / live: scapy sniff on eth0 / wlan0    (systemd service; IPS dry-run)
+       ▲ MCU       : models/live_ids.h              (inference only, ~49 KB const)
 ```
+
+## Scope and status
+
+What the project has shown, and what it has not, as of 30 September 2026.
+
+### Raspberry Pi: 64-bit first, then 32-bit
+
+- **Designed for 64-bit.** The deployment target is a Raspberry Pi 4 on 64-bit
+  Raspberry Pi OS (aarch64). There the sensor runs the ONNX model through
+  onnxruntime's official aarch64 wheels, and the dependency lock is built for
+  it. This path runs on 64-bit development hosts and in CI. It has **not** yet
+  run on a Pi 4, because no Pi 4 was available.
+- **Then made to work on 32-bit.** The available board was a Raspberry Pi 2
+  Model B on 32-bit Raspberry Pi OS (armv7l). onnxruntime publishes no 32-bit
+  ARM wheels, so the 64-bit install cannot work there. Two 32-bit runtimes
+  were added for the **same trained model** (it was not retrained):
+  1. **C backend (default on 32-bit):** the model's C export
+     (`models/live_ids.h`) is compiled on the Pi and called through ctypes
+     (`src/c_backend.py`). The installer selects it automatically on
+     armv6l/armv7l.
+  2. **onnxruntime 1.23.2 for armv7l**, cross-compiled from source under
+     emulation ([`deploy/onnxruntime-armv7/`](deploy/onnxruntime-armv7/README.md)).
+     The wheel is built on demand, not committed.
+- **Same answers on both.** Against 64-bit onnxruntime, both 32-bit runtimes
+  gave identical labels on 5,000 inputs (largest probability difference
+  1.07e-6). On the Pi 2 the C backend is about 2× faster in batch; the armv7
+  onnxruntime wheel is faster for a single flow. C stays the default because it
+  also needs no custom wheel.
+- A Pi 2 is below the Pi 4 target. Its results show the system works on
+  constrained 32-bit hardware; they are not the Pi 4 acceptance run.
+
+### IPS (prevention): a tested mechanism, not a safe protection
+
+Works:
+- The response ladder (monitor → throttle → block) with a strike gate,
+  allowlist, per-class thresholds and automatic expiry through nftables sets
+  with kernel timeouts. It is covered by unit tests and was run once in enforce
+  mode on the Pi 2: the attacking laptop was blocked about 5 s into a port scan,
+  and the block lifted itself 21 s after the attack stopped.
+- After that run, sources that cannot be a meaningful attacker (unspecified,
+  loopback, multicast, link-local, broadcast) were excluded from enforcement,
+  and firewall commands were resolved to absolute paths for systemd. These
+  changes have unit tests but have not yet been re-run in enforce mode on
+  hardware.
+
+Does not work yet:
+- **Safety on a real network.** In the enforce run, false alarms became
+  actions against 12 innocent sources, including the router, and one innocent
+  IPv6 device was blocked. Replaying those recorded actions through the new
+  exclusion rule removes 7 of the 12 (including the block), but the router
+  and four other IPv4 hosts would still be throttled. The root cause is the
+  detector's false-alarm rate on ordinary LAN traffic (about 1.9 incidents per
+  minute), which the response layer cannot fix by itself.
+- **Protecting other devices.** The default `--ips-scope host` protects only
+  the sensor. Inline bridge mode (`--ips-scope network`) is implemented but has
+  never been tested.
+- **Enforcement from the installed service.** The enforce test ran the daemon
+  by hand as root, not through the systemd unit.
+
+The installed service therefore runs IDS-only. `--ips` shows what the responder
+*would* do without touching the firewall. `--prevent` belongs only on an
+isolated test network.
+
+### ESP32 (microcontroller): the model runs, the IDS does not exist yet
+
+Done:
+- The model exports to a dependency-free C99 header (`models/live_ids.h`).
+  `src/export_c.py --verify` checks its decisions against the XGBoost model.
+  The 32-bit Pi runs this same header, so the C code has run on real ARM
+  hardware.
+- Footprint of an `-Os` build on the development host: about 49 KB of
+  constant data (a 43 KB node table plus a 6 KB per-tree index), about 240 B
+  of code, and no heap. The constant data is the same size on an ESP32, and it
+  is well within the chip's flash and RAM.
+- A minimal Arduino sketch ([`deploy/esp32_iot_ids/`](deploy/esp32_iot_ids/esp32_iot_ids.ino))
+  calls the model and prints the class over Serial.
+
+Not done:
+- The sketch has **not** been compiled with the ESP32 toolchain or flashed to a
+  board.
+- **No on-device feature extraction.** The sketch feeds a vector of zeros,
+  which the model labels `icmpflood`; that is a placeholder, not an
+  observation. The 22-feature flow table in `src/flow_features.py` has to be
+  ported to C and checked against the Python version.
+- **No capture path.** An ESP32 cannot see a switched wired LAN. To observe
+  the kind of flows the model was trained on, it has to sit inline, for
+  example as the Wi-Fi access point the IoT devices join. Passive Wi-Fi
+  sniffing would need a different feature set and retraining.
+
+On-device ESP32 detection is targeted for the final project review (October
+2026). See [`deploy/README_MCU.md`](deploy/README_MCU.md).
 
 ### Attack taxonomy (hierarchical)
 
@@ -163,7 +255,8 @@ at `~/.kaggle/kaggle.json` — see `code/download_datasets.py`.
 
 ## Deploy on a Raspberry Pi (IDS; experimental response available)
 
-Runtime needs only `onnxruntime + numpy + scapy`. Full walkthrough in
+Runtime needs only `onnxruntime + numpy + scapy` on a 64-bit Pi; on a 32-bit Pi
+the installer uses the C backend instead of onnxruntime. Full walkthrough in
 **[deploy/README_PI.md](deploy/README_PI.md)**.
 
 ```bash
@@ -196,7 +289,7 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 | Attack detection rate (recall) | 100.00% |
 | Benign false-positive rate | **0.0%** |
 | Mirai recall | 94.2% |
-| Model size (ONNX / C const-data) | 91.8 KB / ~43 KB |
+| Model size (ONNX / C const-data) | 91.8 KB / ~49 KB |
 | Host ONNX inference | 8.1 µs/flow (p99 11.2 µs) |
 
 > **Read this number as a property of the generators, not of the detector.**
@@ -277,7 +370,7 @@ numbers would be fabrication. The affected artifacts are quarantined under
 | Feature extraction | 215,601 packets/s; 56,455 flows/s |
 | End to end | 52,249 flows/s |
 | Daemon memory | **55.1 MB** (onnxruntime + numpy) |
-| Model size | 91.8 KB ONNX / ~43 KB C const |
+| Model size | 91.8 KB ONNX / ~49 KB C const |
 
 The host benchmark is not a Pi projection. Measured Pi 2 compatibility results
 are reported separately above; formal Pi 4 acceptance and the full soak remain
@@ -399,7 +492,8 @@ ports, one host) from a Mirai spread (one port, many hosts) from a flood
 Verdicts are aggregated into per-`(source, type)` **incidents**, so a 500-port
 scan is one alert.
 
-The **IPS layer** (`--ips` dry-run, `--prevent` enforce) responds on a ladder —
+The **IPS layer** (`--ips` dry-run, `--prevent` enforce; experimental, see
+*Scope and status*) responds on a ladder —
 *monitor → throttle → block* — via nftables/iptables, with an allowlist and
 auto-expiry, degrading safely to dry-run when it can't enforce.
 

@@ -1,0 +1,15 @@
+01 | preflight | PASS
+02 | offline --pcap + --csv (4674 rows) | PASS
+03 | replay: 33 incidents, 9/9 attack types | PASS
+04 | --class-min-conf xmas_scan=0.99 (0 low-conf xmas alerts), --abstain-conf 0.9 (8 unknown alerts) | PASS
+05 | IPS dry-run ladder (6 would-block, 34 throttle lines) | PASS
+06 | syslog cef (67 messages) | PASS
+06 | syslog json (67 messages) | PASS
+08 | SIEM unreachable, sensor keeps running | PASS
+09 | dashboard refuses 0.0.0.0 without token | PASS
+09 | dashboard token auth (none=401 wrong=401 query=200 header=200) | PASS
+10 | dashboard /api/state JSON (['blocks', 'by_category', 'by_type', 'colors', 'generated', 'recent', 'throttles) | PASS
+11 | MCU C99 header compiles -Werror and runs (icmpflood margin=0.607906) | PASS
+12 | flow_features CLI (6 lines) | PASS
+13 | traffic generators (generated 10 kinds) | PASS
+14 | --backend c works; --backend onnx fails cleanly (no armv7 wheel) | PASS

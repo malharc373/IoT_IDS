@@ -1,0 +1,3 @@
+# Linux/x86_64 research/training lock input.
+# The separate artifact captures platform-conditional XGBoost/NCCL dependencies.
+-r requirements.in

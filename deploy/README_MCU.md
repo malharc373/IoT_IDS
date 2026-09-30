@@ -7,7 +7,7 @@ dependency-free C header, `models/live_ids.h`:
 python src/export_c.py --verify   # regenerate + check 100% parity vs XGBoost
 ```
 
-Footprint: ~42 KB of `const` tree data in flash, ~130 bytes of RAM at inference,
+Footprint: ~43 KB of `const` tree data in flash, ~130 bytes of RAM at inference,
 no libc math required. Fits comfortably on an ESP32 (4 MB flash / 520 KB RAM);
 too large for tiny AVR Arduinos (train a smaller model for those — fewer
 estimators / lower depth in `src/train_live_model.py`).
@@ -21,16 +21,28 @@ estimators / lower depth in `src/train_live_model.py`).
  * (see models/live_meta.json "features"). Compute them on-device from the
  * packets you observe, then: */
 float feats[IDS_NUM_FEATURES] = { /* proto, duration, tot_pkts, ... dst_port */ };
-int cls = ids_predict(feats);            /* class id */
+float margin = 0.0f;
+int cls = ids_predict_with_margin(feats, &margin); /* class id + score margin */
 const char *name = IDS_LABELS[cls];      /* "benign", "portscan", ... */
 if (cls != 0) {
     /* attack detected — raise a GPIO, publish an MQTT alert, drop the peer … */
 }
 ```
 
-The scaler is baked in — pass **raw** feature values; `ids_predict` scales,
-walks every tree, and returns the arg-max class. It is pure C99 and has no
-heap allocation, so it is safe to call from an ISR-adjacent loop.
+There is no scaler — pass **raw** feature values. `ids_predict_with_margin`
+returns the arg-max class and writes the gap between the best and second-best
+raw class scores. A larger margin means the model's choice was less ambiguous,
+but it is **not a calibrated probability** and must not be interpreted as one.
+The original `ids_predict` class-only function remains available. Both are pure
+C99 and use no heap allocation, so they are safe in an ISR-adjacent loop.
+
+## ESP32 serial example
+
+An Arduino/PlatformIO example is provided at
+`deploy/esp32_iot_ids/esp32_iot_ids.ino`. Copy or symlink `models/live_ids.h`
+into that sketch directory, replace the sample feature acquisition function
+with your flow counter, and flash it. The example prints the predicted class
+and raw score margin over Serial without enabling any enforcement action.
 
 ## Notes
 

@@ -1,0 +1,6 @@
+# Test/lint tools layered over the complete project lock.
+-r requirements.txt
+pytest>=8,<10
+ruff>=0.8,<1
+mypy>=1.20,<2
+pip-tools>=7.6,<8

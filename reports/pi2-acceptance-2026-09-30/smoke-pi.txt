@@ -1,0 +1,106 @@
+WARNING: No route found for IPv6 destination 2001:db8::2 (no default route?)
+WARNING: No route found for IPv6 destination 2001:db8::2 (no default route?)
+WARNING: MAC address to reach destination not found. Using broadcast.
+WARNING: MAC address to reach destination not found. Using broadcast.
+WARNING: more No route found for IPv6 destination 2001:db8::2 (no default route?)
+Running smoke tests (tmp=/tmp/iotids_test_g46j8h2m)
+
+  FAIL  imports  -> ModuleNotFoundError("No module named 'pandas'")
+  FAIL  requirements importable  -> ModuleNotFoundError("No module named 'pandas'")
+  PASS  flow_features core
+  PASS  flow_features CLI
+  PASS  parse ipv6 / vlan / snaplen
+  PASS  pcapng reader
+  PASS  classic pcap resolution + linktype
+  PASS  capture linktype decoders
+  PASS  flow direction is initiator-relative
+  PASS  fragment parsing is safe
+  PASS  tcp teardown splits flows
+  PASS  flowtable window + dirty
+  PASS  flowtable thread safety
+  PASS  verdict cache == full scoring
+  PASS  traffic_gen all kinds
+  PASS  traffic_gen CLI
+  FAIL  build_corpus helper  -> ModuleNotFoundError("No module named 'pandas'")
+  FAIL  model artifacts  -> ModuleNotFoundError("No module named 'onnxruntime'")
+  PASS  daemon rejects research model
+  PASS  ips responder ladder
+  PASS  class thresholds + abstention
+  PASS  ips scope + nft idempotence
+  PASS  IPS refreshes block deadline
+  PASS  IPS state persistence is atomic
+  PASS  incident watermarks are bounded
+  FAIL  c export + compile  -> ModuleNotFoundError("No module named 'xgboost'")
+  FAIL  committed C header margin API  -> ModuleNotFoundError("No module named 'onnxruntime'")
+  FAIL  SFAF alignment contract  -> ModuleNotFoundError("No module named 'pandas'")
+  FAIL  alignment missing-row accounting  -> ModuleNotFoundError("No module named 'pandas'")
+  FAIL  Bot-IoT bounded reservoir sampling  -> ModuleNotFoundError("No module named 'pandas'")
+  FAIL  IoT-23 cache tracks loader code  -> ModuleNotFoundError("No module named 'pandas'")
+  FAIL  NxN diagonal uses held-out rows  -> ModuleNotFoundError("No module named 'pandas'")
+  FAIL  threshold budget is unconditional  -> ModuleNotFoundError("No module named 'pandas'")
+  FAIL  multidataset taxonomy  -> ModuleNotFoundError("No module named 'pandas'")
+  FAIL  zeek composite labels  -> ModuleNotFoundError("No module named 'pandas'")
+  FAIL  trivial-baseline guard  -> ModuleNotFoundError("No module named 'pandas'")
+  PASS  syslog/CEF SIEM export
+  PASS  web dashboard
+  PASS  dashboard auth + binding
+  PASS  dashboard token file
+  FAIL  documented counts match code  -> ModuleNotFoundError("No module named 'pandas'")
+  PASS  no credential literals
+  FAIL  no tracked workspace debris  -> CalledProcessError(128, ['git', '-C', '/home/malharfalke/IOT-IDS', 'ls-files', '-z'])
+  PASS  dashboard incremental reads
+  PASS  alert log rotation
+  PASS  detector classify known
+  FAIL  C backend matches ONNX  -> ModuleNotFoundError("No module named 'onnxruntime'")
+  PASS  C backend auto fallback + drift guard
+  PASS  daemon offline mode
+  PASS  daemon replay mode
+  PASS  daemon live path (scapy)
+  PASS  daemon --help
+  FAIL  SFAF trainer guard  -> AssertionError('                                                                      ~~~~~~~~~~~~~~~~~~~~~~~^^^\n  File "<frozen importlib._bootstrap_external>", line 1026, in exec_module\n  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed\n  File "/home/malharfalke/IOT-IDS/code/02_train_sfaf.py", line 53, in <module>\n    import pandas as pd\nModuleNotFoundError: No module named \'pandas\'\n')
+  PASS  live trainer split guard survives -O
+  FAIL  SFAF onnx export  -> ModuleNotFoundError("No module named 'pandas'")
+  PASS  download_datasets runs
+  PASS  download datasets dangling symlink
+  PASS  dataset archives extract safely
+  PASS  flow table prune bounds memory
+  PASS  flow reuse distinct records
+  PASS  shell script syntax
+  PASS  Pi setup strict preflight
+  PASS  deployment preflight
+  PASS  benchmark params
+  PASS  Pi detection requires device identity
+  PASS  benchmark extraction section runs
+  PASS  no retracted numbers in live docs
+  PASS  current claims are evidence scoped
+  FAIL  repository governance contract  -> CalledProcessError(128, ['git', 'ls-files', 'Literature'])
+  FAIL  repository metadata absent  -> CalledProcessError(128, ['git', 'ls-files'])
+  PASS  systemd unit sane
+  FAIL  release bundle deterministic  -> FileNotFoundError('missing release files: output/pdf/IOT_IDS_Corrected_Technical_Report.pdf, output/presentation/IOT_IDS_Corrected_Project_Review.pptx')
+
+==================================================
+  49 passed, 23 failed
+==================================================
+  FAILED: imports: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: requirements importable: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: build_corpus helper: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: model artifacts: ModuleNotFoundError("No module named 'onnxruntime'")
+  FAILED: c export + compile: ModuleNotFoundError("No module named 'xgboost'")
+  FAILED: committed C header margin API: ModuleNotFoundError("No module named 'onnxruntime'")
+  FAILED: SFAF alignment contract: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: alignment missing-row accounting: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: Bot-IoT bounded reservoir sampling: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: IoT-23 cache tracks loader code: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: NxN diagonal uses held-out rows: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: threshold budget is unconditional: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: multidataset taxonomy: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: zeek composite labels: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: trivial-baseline guard: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: documented counts match code: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: no tracked workspace debris: CalledProcessError(128, ['git', '-C', '/home/malharfalke/IOT-IDS', 'ls-files', '-z'])
+  FAILED: C backend matches ONNX: ModuleNotFoundError("No module named 'onnxruntime'")
+  FAILED: SFAF trainer guard: AssertionError('                                                                      ~~~~~~~~~~~~~~~~~~~~~~~^^^\n  File "<frozen importlib._bootstrap_external>", line 1026, in exec_module\n  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed\n  File "/home/malharfalke/IOT-IDS/code/02_train_sfaf.py", line 53, in <module>\n    import pandas as pd\nModuleNotFoundError: No module named \'pandas\'\n')
+  FAILED: SFAF onnx export: ModuleNotFoundError("No module named 'pandas'")
+  FAILED: repository governance contract: CalledProcessError(128, ['git', 'ls-files', 'Literature'])
+  FAILED: repository metadata absent: CalledProcessError(128, ['git', 'ls-files'])
+  FAILED: release bundle deterministic: FileNotFoundError('missing release files: output/pdf/IOT_IDS_Corrected_Technical_Report.pdf, output/presentation/IOT_IDS_Corrected_Project_Review.pptx')

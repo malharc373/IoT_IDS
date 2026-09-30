@@ -1,0 +1,63 @@
+IoT-IDS SYSTEM BENCHMARK   host=Linux-6.18.50+rpt-rpi-v7-armv7l-with-glibc2.41
+python=3.13.5  time=2026-09-30 16:05
+
+====================================================================
+  1. MODEL PARAMETERS & FOOTPRINT
+====================================================================
+  Features               : 22
+  Classes                : 10  (benign, portscan, synflood, icmpflood, udpflood, ssh_bruteforce, slowloris, mirai, xmas_scan, mqtt_flood)
+  Boosted trees          : 1200
+  Total nodes            : 2,780
+  ONNX model size        : 91.8 KB
+  C header size          : 102.7 KB (~43 KB const data)
+  In-domain metrics      : {'multiclass_accuracy': 1.0, 'macro_f1': 1.0, 'binary_accuracy': 1.0, 'binary_f1_attack': 1.0}
+  Split                  : GroupShuffleSplit on scenario (no scenario spans the split)
+  Without dst_port       : acc=1.0 (delta +0.0000) — the model is not a port lookup
+  CAVEAT                 : these are SYNTHETIC-traffic numbers. The
+                           corpus is trivially separable (scenario-level
+                           split, mixed benign background and a dst_port
+                           ablation all leave the score unchanged), so
+                           read them as a property of the generators,
+                           not as detection accuracy on real traffic.
+
+====================================================================
+  2. C-BACKEND INFERENCE LATENCY & THROUGHPUT
+====================================================================
+  onnxruntime is not installed on this host, so this measures the
+  daemon's fallback: models/live_ids.h compiled as a shared library
+  and called through ctypes (src/c_backend.py), softmax in numpy.
+   batch   mean_ms   p50_ms   p99_ms   us/flow      flows/s
+       1    0.5352   0.5041   0.7991   535.170        1,869
+       8    0.9528   0.9264   1.1684   119.103        8,396
+      32    2.3190   2.2895   2.6155    72.470       13,799
+      64    4.1677   4.1043   4.5423    65.120       15,356
+     128    7.7571   7.7135   8.2125    60.602       16,501
+     512   29.7861  29.4653  34.5465    58.176       17,189
+    1024   58.4939  58.3153  62.8207    57.123       17,506
+
+  single-flow latency    : 535.2 us (p99 799.1 us)
+  peak throughput        : 17,506 flows/s (batch 1024)
+
+====================================================================
+  3. NATIVE C MODEL (MCU PATH)
+====================================================================
+  C ids_predict latency  : 50846.2 ns/flow (50.846 us)
+  C throughput           : 19,667 flows/s (single thread)
+  runtime deps           : none (pure C99, ~130 B stack)
+
+====================================================================
+  4. FEATURE EXTRACTION THROUGHPUT
+====================================================================
+  pcap                   : demo_mixed.pcap (17,850 packets -> 4,674 flows)
+  parse+read             : 419.1 ms (42,588 packets/s)
+  parse+aggregate        : 2641.4 ms (6,758 packets/s, 1,770 flows/s)
+
+====================================================================
+  5. END-TO-END (pcap -> verdicts)
+====================================================================
+  4,674 flows classified in 3552.7 ms (1,316 flows/s end-to-end)
+  detected 4,573 attack flows / 101 benign
+
+====================================================================
+  6. ACCURACY (held-out, unseen-seed synthetic)
+====================================================================

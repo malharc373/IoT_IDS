@@ -156,8 +156,13 @@ live. Run it alongside the sensor and browse from any device on the LAN:
 
 ```bash
 .venv/bin/python src/dashboard.py --port 8080                    # loopback only
-.venv/bin/python src/dashboard.py --host 0.0.0.0 --token generate # LAN + token
+.venv/bin/python src/dashboard.py --host 0.0.0.0 \
+    --token-file logs/dashboard.token                            # LAN + token
 ```
+
+`setup_pi.sh` creates `logs/dashboard.token` (mode 600). A token read from a
+file stays out of `ps` output and shell history, unlike a value passed on the
+command line.
 
 It shows active incidents, attack-type/category breakdown, top sources, a
 per-minute timeline, and the current IPS blocklist and throttle list —

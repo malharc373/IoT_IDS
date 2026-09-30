@@ -16,10 +16,14 @@ Items are ordered by how badly they would hurt in an evaluation.
 | 3 | Fig. 6.1 | Training-test matrix totalling 10,982 flows, 612 benign | Current split is 12,191 flows, 1,679 benign. | Replace with `demo/results/live_confusion_matrix.png`. |
 | 4 | Table 6.1, §6.2, §7.1, Fig. 6.3 | 10.5 µs (p99 16.2), 407k flows/s, C 1.16 µs, 52.7k flows/s end-to-end, 55.4 MB, "5 Sep run" | Committed `demo/results/BENCHMARK.md` is the 30 Sep run: **14.4 µs (p99 22.0), 396,744 flows/s, C 1.106 µs, 213,947 packets/s, 50,454 flows/s end-to-end, 56.3 MB**. The 5 Sep output is no longer in the repository, so Appendix A cannot reproduce the report. | Quote the committed run, or archive the 5 Sep output next to the report. |
 | 5 | §5.4, Table 6.1, §7.1 | 67 automated tests | 70 on `integration/final-capstone`; 74 on `feat/c-inference-fallback`. | Update the count, or say "70+". |
-| 6 | Timeline 31 Aug, §5.4, §7.1 | CodeQL is set up | No CodeQL workflow or configuration exists (`.github/` has `ci.yml`, `release.yml`, `dependabot.yml`). | Remove CodeQL, or add the workflow before claiming it. |
-| 7 | Table 4.2 | TCP flags SYN, ACK, FIN, RST, PSH, URG; packet-length "variance" | The contract has SYN/FIN/RST/ACK ratios only, and standard deviation (`std_pkt_len`, `std_iat`). As written the table adds up to 24 features. Appendix A.1 lists the correct 22, so the report contradicts itself. | Correct the table from `models/live_meta.json`. |
-| 8 | §2.2, ref. [8], §4.9, Table 5.1 | ONNX Runtime runs the model "on laptop and Pi"; the Pi target is a Pi 4 | The lab Pi is a **Raspberry Pi 2 Model B** (32-bit armv7l, Python 3.13). onnxruntime publishes no 32-bit ARM wheels. The model runs there through the C export (see [Pi 2 results](../pi2-acceptance-2026-09-30/README.md)). | Correct the claim and fill the Table 5.1 rows that are now measured. |
-| 9 | §2.1, §5.1 | 11 datasets, but only 8 named | The loaders (`code/multidataset.py`) are CICIDS2017, UNSW-NB15, TON_IoT, Bot-IoT, CICDDoS2019, IoTID20, X-IIoTID, MQTT-IoT-IDS2020, CIC-IoT-2023, WUSTL-IIoT and IoT-23. | Name all 11. The "MQTT and related captures" are the MQTT-IoT-IDS2020 dataset. |
+| 6 | Table 4.2 | TCP flags SYN, ACK, FIN, RST, PSH, URG; packet-length "variance" | The contract has SYN/FIN/RST/ACK ratios only, and standard deviation (`std_pkt_len`, `std_iat`). As written the table adds up to 24 features. Appendix A.1 lists the correct 22, so the report contradicts itself. | Correct the table from `models/live_meta.json`. |
+| 7 | §2.2, ref. [8], §4.9, Table 5.1 | ONNX Runtime runs the model "on laptop and Pi"; the Pi target is a Pi 4 | The lab Pi is a **Raspberry Pi 2 Model B** (32-bit armv7l, Python 3.13). onnxruntime publishes no 32-bit ARM wheels. The model runs there through the C export (see [Pi 2 results](../pi2-acceptance-2026-09-30/README.md)). | Correct the claim and fill the Table 5.1 rows that are now measured. |
+| 8 | §2.1, §5.1 | 11 datasets, but only 8 named | The loaders (`code/multidataset.py`) are CICIDS2017, UNSW-NB15, TON_IoT, Bot-IoT, CICDDoS2019, IoTID20, X-IIoTID, MQTT-IoT-IDS2020, CIC-IoT-2023, WUSTL-IIoT and IoT-23. | Name all 11. The "MQTT and related captures" are the MQTT-IoT-IDS2020 dataset. |
+
+CodeQL (Timeline 31 Aug, §5.4, §7.1) is correct as claimed. It runs through
+GitHub's default code-scanning setup, which has no workflow file in the
+repository; the `Analyze (python)` and `CodeQL` checks on PR #2 are its runs.
+An earlier edition of this review wrongly listed it as absent.
 
 ## 2. References to verify
 

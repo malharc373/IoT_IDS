@@ -47,6 +47,28 @@ signatures* these tools produce (SYN-only short flows, high-rate single-port
 floods, many-port sweeps, long low-and-slow connections), which is what the
 flow-based model keys on.
 
+## C. One-command live demo — used for the presentation
+
+`live_demo.py` drives a **running** sensor with real traffic so an audience can
+watch the dashboard react: benign background chatter throughout, then every
+attack class in turn with a gap after each. Run it on the same box as the
+sensor; loopback is the default target, so nothing leaves the machine.
+
+```bash
+# terminal 1 — the sensor
+sudo python src/ids_daemon.py --iface eth0,lo --log logs/alerts.jsonl
+# terminal 2 — the demo (sudo enables the hping3 floods + Xmas scan)
+sudo python attacks/live_demo.py            # all classes, ~4-5 min
+sudo python attacks/live_demo.py --fast     # shorter, for a rehearsal
+python  attacks/live_demo.py --only portscan slowloris   # pick classes
+```
+
+Without root it still runs the connect-scan, SSH brute force, slowloris, MQTT
+and Mirai classes and skips the raw-packet floods with a note. It targets
+loopback unless you pass `--target <ip> --i-own-the-target`, and even then it
+refuses the packet floods against a remote host unless you add
+`--allow-remote-flood`. Watch `logs/alerts.jsonl` or the dashboard as it runs.
+
 > Authorized-use only. These commands generate hostile traffic and must be
 > confined to a lab you control (your own Pi + host). Never point them at
 > third-party systems.

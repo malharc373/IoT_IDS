@@ -585,6 +585,70 @@ def t_ips_responder():
     assert r1.handle("203.0.113.50", "mirai", 0.95)["action"] == "would-block"
 
 
+def t_ips_command_discovery_and_target_safety():
+    """Restricted PATHs still resolve tools; unsafe sources are never targeted."""
+    from unittest.mock import patch
+    from ips_response import Responder, find_command
+
+    command_dir = os.path.join(TMP, "restricted-path-sbin")
+    os.makedirs(command_dir, exist_ok=True)
+    nft = os.path.join(command_dir, "nft")
+    with open(nft, "w") as f:
+        f.write("#!/bin/sh\nexit 0\n")
+    os.chmod(nft, 0o755)
+    with patch("ips_response.shutil.which", return_value=None):
+        assert find_command("nft", (command_dir,)) == nft
+
+    r = Responder(mode="dry-run", strikes=1,
+                  state_path=os.path.join(TMP, "ips_safe_targets.json"))
+    unsafe = {
+        "0.0.0.0": "unspecified",
+        "255.255.255.255": "limited-broadcast",
+        "224.0.0.251": "multicast",
+        "169.254.1.5": "link-local",
+        "::": "unspecified",
+        "ff02::1": "multicast",
+        "fe80::1234": "link-local",
+    }
+    for ip, reason in unsafe.items():
+        result = r.handle(ip, "udpflood", 0.99)
+        assert result == {
+            "ip": ip,
+            "action": "skip",
+            "reason": f"non-enforceable-source:{reason}",
+        }, result
+    assert r.handle("203.0.113.80", "portscan", 0.99)["action"] == "would-block"
+
+
+def t_ips_expiry_tolerates_kernel_timeout_only():
+    """nft timeout cleanup is quiet, while unrelated backend errors stay visible."""
+    from unittest.mock import patch
+    from ips_response import Responder
+
+    messages = []
+    r = Responder(mode="dry-run", backend="nftables", logger=messages.append,
+                  state_path=os.path.join(TMP, "ips_expiry.json"))
+    cmd = ["nft", "delete", "element"]
+    missing = subprocess.CalledProcessError(
+        1, cmd, stderr="Error: No such file or directory")
+    with patch("ips_response.subprocess.run", side_effect=missing):
+        assert not r._run(cmd, missing_ok=True)
+    assert not [m for m in messages if "backend cmd failed" in m]
+
+    denied = subprocess.CalledProcessError(1, cmd, stderr="Operation not permitted")
+    with patch("ips_response.subprocess.run", side_effect=denied):
+        assert not r._run(cmd, missing_ok=True)
+    assert any("Operation not permitted" in m for m in messages)
+
+    calls = []
+    r.effective_enforce = True
+    r.active = {"203.0.113.81": {"until": 1.0, "kind": "portscan"}}
+    r._remove_block = lambda ip, missing_ok=False: calls.append((ip, missing_ok))
+    with patch("ips_response.time.time", return_value=2.0):
+        assert r.expire() == ["203.0.113.81"]
+    assert calls == [("203.0.113.81", True)]
+
+
 def t_class_thresholds_and_abstention():
     """Per-class gates override defaults and low-score predictions can abstain."""
     import numpy as np
@@ -682,7 +746,7 @@ def t_ips_refreshes_block_deadline():
     ran = []
     nft._run = lambda args, stdin=None: ran.append((args, stdin)) or True
     nft._refresh_block("203.0.113.41")
-    assert ran[0][0] == ["nft", "-f", "-"]
+    assert os.path.basename(ran[0][0][0]) == "nft" and ran[0][0][1:] == ["-f", "-"]
     assert "delete element" in ran[0][1] and "add element" in ran[0][1]
     assert "timeout 60s" in ran[0][1]
 
@@ -1861,8 +1925,11 @@ def t_current_claims_are_evidence_scoped():
     assert not offenders, f"stale or unsupported current claims: {offenders}"
 
     readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
-    for supported in ["99.65%", "0.9961", "91.8 KB", "8.1 µs/flow",
-                      "403,058 flows/s", "Raspberry Pi throughput remains"]:
+    for supported in [
+        "99.65%", "0.9961", "91.8 KB", "8.1 µs/flow", "403,058 flows/s",
+        "7/7 raised an incident", "19 false-alarm incidents",
+        "formal Pi 4 acceptance",
+    ]:
         assert supported in readme, f"README lost evidence/scope marker: {supported}"
 
 
@@ -2004,6 +2071,8 @@ TESTS = [
         ("model artifacts", t_model_artifacts),
         ("daemon rejects research model", t_daemon_rejects_research_model_contract),
         ("ips responder ladder", t_ips_responder),
+        ("IPS command discovery + target safety", t_ips_command_discovery_and_target_safety),
+        ("IPS expiry tolerates kernel timeout only", t_ips_expiry_tolerates_kernel_timeout_only),
         ("class thresholds + abstention", t_class_thresholds_and_abstention),
         ("ips scope + nft idempotence", t_ips_scope_and_idempotence),
         ("IPS refreshes block deadline", t_ips_refreshes_block_deadline),

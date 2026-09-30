@@ -71,6 +71,21 @@ SCOPES = ("host", "network")
 # hook -> iptables built-in chain to jump from
 _SCOPE_CHAINS = {"host": ["INPUT"], "network": ["INPUT", "FORWARD"]}
 _SCOPE_HOOKS = {"host": ["input"], "network": ["input", "forward"]}
+_SYSTEM_COMMAND_DIRS = (
+    "/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin",
+)
+
+
+def find_command(name, search_dirs=_SYSTEM_COMMAND_DIRS):
+    """Resolve a firewall executable even under systemd's restricted PATH."""
+    found = shutil.which(name)
+    if found:
+        return os.path.abspath(found)
+    for directory in search_dirs:
+        candidate = os.path.join(directory, name)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
 
 
 def _own_ips():
@@ -93,9 +108,9 @@ def detect_backend():
     """Return 'nftables' | 'iptables' | 'none' for the current host."""
     if os.name != "posix":
         return "none"
-    if shutil.which("nft"):
+    if find_command("nft"):
         return "nftables"
-    if shutil.which("iptables"):
+    if find_command("iptables"):
         return "iptables"
     return "none"
 
@@ -123,6 +138,10 @@ class Responder:
         self.strikes = max(int(strikes), 1)
         self.strike_window = strike_window
         self.throttle_pps = throttle_pps
+        self.commands = {
+            name: find_command(name)
+            for name in ("nft", "iptables", "ip6tables")
+        }
         self.backend = detect_backend() if backend == "auto" else backend
         self.is_root = hasattr(os, "geteuid") and os.geteuid() == 0
         self.log = logger or (lambda m: print(m))
@@ -141,12 +160,18 @@ class Responder:
         self._load_state()
 
         # if we intend to enforce, make sure we actually can; else fall back
+        backend_ready = (
+            bool(self.commands["nft"])
+            if self.backend == "nftables"
+            else bool(self.commands["iptables"])
+        )
         self.effective_enforce = (
             self.mode == "enforce" and self.backend in ("nftables", "iptables")
-            and self.is_root)
+            and backend_ready and self.is_root)
         if self.mode == "enforce" and not self.effective_enforce:
             self.log(f"[IPS] enforce requested but not possible "
-                     f"(backend={self.backend}, root={self.is_root}) -> dry-run")
+                     f"(backend={self.backend}, command={self.backend_command}, "
+                     f"root={self.is_root}) -> dry-run")
         if self.effective_enforce:
             self._ensure_backend()
             self._restore_active()
@@ -175,6 +200,25 @@ class Responder:
         except ValueError:
             return True   # can't parse -> don't touch it
         return any(addr in net for net in self.allow_nets)
+
+    @staticmethod
+    def _unsafe_source_reason(ip):
+        """Return why an address must never become a firewall target."""
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return "invalid-address"
+        if addr.is_unspecified:
+            return "unspecified"
+        if addr.is_loopback:
+            return "loopback"
+        if addr.is_multicast:
+            return "multicast"
+        if addr.is_link_local:
+            return "link-local"
+        if str(addr) == "255.255.255.255":
+            return "limited-broadcast"
+        return None
 
     # ── state persistence ─────────────────────────────────────────────────────
     def _load_state(self):
@@ -255,6 +299,10 @@ class Responder:
         threshold = self.class_min_conf.get(kind, self.min_conf)
         if confidence < threshold:
             return {"ip": ip, "action": "monitor", "reason": "below-threshold"}
+        unsafe_reason = self._unsafe_source_reason(ip)
+        if unsafe_reason:
+            return {"ip": ip, "action": "skip",
+                    "reason": f"non-enforceable-source:{unsafe_reason}"}
         if self._allowed(ip):
             return {"ip": ip, "action": "skip", "reason": "allowlisted"}
         now = time.time()
@@ -304,12 +352,12 @@ class Responder:
         gone = [ip for ip, v in self.active.items() if v["until"] <= now]
         for ip in gone:
             if self.effective_enforce:
-                self._remove_block(ip)
+                self._remove_block(ip, missing_ok=True)
             del self.active[ip]
         thr_gone = [ip for ip, v in self.throttled.items() if v["until"] <= now]
         for ip in thr_gone:
             if self.effective_enforce:
-                self._remove_throttle(ip)
+                self._remove_throttle(ip, missing_ok=True)
             del self.throttled[ip]
         # forget stale corroboration history so strikes don't accumulate forever
         for ip in list(self._sightings):
@@ -343,11 +391,30 @@ class Responder:
         return NFT_BLOCK_SET, NFT_THROTTLE_SET, "iptables"
 
     # ── firewall backends ─────────────────────────────────────────────────────
-    def _run(self, args, stdin=None):
+    @property
+    def backend_command(self):
+        if self.backend == "nftables":
+            return self.commands["nft"]
+        if self.backend == "iptables":
+            return self.commands["iptables"]
+        return None
+
+    def _command(self, name):
+        """Return an absolute executable path when one is installed."""
+        return self.commands.get(name) or name
+
+    def _run(self, args, stdin=None, missing_ok=False):
         try:
             subprocess.run(args, check=True, capture_output=True, input=stdin,
                            text=stdin is not None)
             return True
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr or ""
+            if missing_ok and "No such file or directory" in stderr:
+                return False
+            self.log(f"[IPS] backend cmd failed: {' '.join(args)} "
+                     f"({e}; {stderr.strip()})")
+            return False
         except Exception as e:
             self.log(f"[IPS] backend cmd failed: {' '.join(args)} ({e})")
             return False
@@ -379,13 +446,15 @@ class Responder:
     def _ensure_backend(self):
         if self.backend == "nftables":
             # create-then-flush-then-declare == idempotent, no rule accumulation
-            self._run(["nft", "add", "table", "inet", NFT_TABLE])
-            self._run(["nft", "flush", "table", "inet", NFT_TABLE])
-            self._run(["nft", "-f", "-"], stdin=self._nft_ruleset())
+            nft = self._command("nft")
+            self._run([nft, "add", "table", "inet", NFT_TABLE])
+            self._run([nft, "flush", "table", "inet", NFT_TABLE])
+            self._run([nft, "-f", "-"], stdin=self._nft_ruleset())
         elif self.backend == "iptables":
             # dedicated chain per family, flushed on start; jumps added if absent
-            for ipt in ("iptables", "ip6tables"):
-                if not shutil.which(ipt):
+            for name in ("iptables", "ip6tables"):
+                ipt = self.commands[name]
+                if not ipt:
                     continue
                 self._run([ipt, "-N", IPT_CHAIN])         # fails if exists: fine
                 self._run([ipt, "-F", IPT_CHAIN])
@@ -410,18 +479,18 @@ class Responder:
         secs = seconds or self.block_seconds
         bset, _, ipt = self._sets_for(ip)
         if self.backend == "nftables":
-            self._run(["nft", "add", "element", "inet", NFT_TABLE, bset,
+            self._run([self._command("nft"), "add", "element", "inet", NFT_TABLE, bset,
                        "{ %s timeout %ds }" % (ip, secs)])
         elif self.backend == "iptables":
-            self._run([ipt, "-A", IPT_CHAIN, "-s", ip, "-j", "DROP"])
+            self._run([self._command(ipt), "-A", IPT_CHAIN, "-s", ip, "-j", "DROP"])
 
-    def _remove_block(self, ip):
+    def _remove_block(self, ip, missing_ok=False):
         bset, _, ipt = self._sets_for(ip)
         if self.backend == "nftables":
-            self._run(["nft", "delete", "element", "inet", NFT_TABLE,
-                       bset, "{ %s }" % ip])
+            self._run([self._command("nft"), "delete", "element", "inet", NFT_TABLE,
+                       bset, "{ %s }" % ip], missing_ok=missing_ok)
         elif self.backend == "iptables":
-            self._run([ipt, "-D", IPT_CHAIN, "-s", ip, "-j", "DROP"])
+            self._run([self._command(ipt), "-D", IPT_CHAIN, "-s", ip, "-j", "DROP"])
 
     def _refresh_block(self, ip):
         """Align the backend timeout with the refreshed persisted deadline."""
@@ -433,7 +502,7 @@ class Responder:
             batch = (f"delete element inet {NFT_TABLE} {bset} {{ {ip} }}\n"
                      f"add element inet {NFT_TABLE} {bset} "
                      f"{{ {ip} timeout {self.block_seconds}s }}\n")
-            self._run(["nft", "-f", "-"], stdin=batch)
+            self._run([self._command("nft"), "-f", "-"], stdin=batch)
         # iptables rules have no kernel timeout: the userspace `expire()` call
         # removes them according to the refreshed `self.active` deadline.
 
@@ -446,21 +515,23 @@ class Responder:
         secs = seconds or self.block_seconds
         _, tset, ipt = self._sets_for(ip)
         if self.backend == "nftables":
-            self._run(["nft", "add", "element", "inet", NFT_TABLE,
+            self._run([self._command("nft"), "add", "element", "inet", NFT_TABLE,
                        tset, "{ %s timeout %ds }" % (ip, secs)])
         elif self.backend == "iptables":
             # accept up to the limit, drop the excess from this source
+            ipt = self._command(ipt)
             self._run([ipt, "-A", IPT_CHAIN, "-s", ip, "-m", "limit",
                        "--limit", f"{self.throttle_pps}/second",
                        "--limit-burst", str(self.throttle_pps), "-j", "RETURN"])
             self._run([ipt, "-A", IPT_CHAIN, "-s", ip, "-j", "DROP"])
 
-    def _remove_throttle(self, ip):
+    def _remove_throttle(self, ip, missing_ok=False):
         _, tset, ipt = self._sets_for(ip)
         if self.backend == "nftables":
-            self._run(["nft", "delete", "element", "inet", NFT_TABLE,
-                       tset, "{ %s }" % ip])
+            self._run([self._command("nft"), "delete", "element", "inet", NFT_TABLE,
+                       tset, "{ %s }" % ip], missing_ok=missing_ok)
         elif self.backend == "iptables":
+            ipt = self._command(ipt)
             self._run([ipt, "-D", IPT_CHAIN, "-s", ip, "-m", "limit",
                        "--limit", f"{self.throttle_pps}/second",
                        "--limit-burst", str(self.throttle_pps), "-j", "RETURN"])
@@ -468,7 +539,8 @@ class Responder:
 
     def status(self):
         return {"mode": "enforce" if self.effective_enforce else "dry-run",
-                "backend": self.backend, "scope": self.scope,
+                "backend": self.backend, "backend_command": self.backend_command,
+                "scope": self.scope,
                 "active_blocks": len(self.active),
                 "active_throttles": len(self.throttled),
                 "min_conf": self.min_conf, "strikes": self.strikes,

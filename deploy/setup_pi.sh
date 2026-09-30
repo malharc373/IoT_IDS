@@ -69,7 +69,7 @@ if command -v apt-get >/dev/null 2>&1; then
         PCAP_PKG=libpcap0.8t64
     fi
     # shellcheck disable=SC2086  # EXTRA_PKGS is intentionally word-split
-    sudo apt-get install -y python3-venv python3-pip "$PCAP_PKG" tcpdump $EXTRA_PKGS
+    sudo apt-get install -y python3-venv python3-pip "$PCAP_PKG" tcpdump nftables $EXTRA_PKGS
 else
     echo "  (apt-get not found — skipping; install python3-venv + libpcap manually)"
 fi
@@ -94,6 +94,7 @@ Wants=network-online.target
 Type=simple
 User=root
 WorkingDirectory=$REPO_DIR
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=$PY $REPO_DIR/src/ids_daemon.py --iface $IFACE --log $REPO_DIR/logs/alerts.jsonl
 Restart=on-failure
 RestartSec=3

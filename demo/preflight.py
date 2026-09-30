@@ -162,8 +162,27 @@ def check_pipeline() -> None:
         f"{label}, confidence={confidence:.3f}, backend={detector.backend}")
 
 
+def check_response_backend() -> None:
+    _section("5. Optional response backend")
+    sys.path.insert(0, os.path.join(ROOT, "src"))
+    try:
+        from ips_response import Responder
+        responder = Responder(mode="dry-run", logger=lambda _message: None)
+    except Exception as exc:
+        _warn("response backend", f"could not inspect: {exc!r}",
+              "install nftables; IDS monitoring remains available")
+        return
+    if responder.backend_command:
+        _ok("response backend",
+            f"{responder.backend} at {responder.backend_command}; enforcement stays opt-in")
+    else:
+        _warn("response backend", "no nftables/iptables executable found; "
+              "IDS and dry-run monitoring remain available",
+              "install nftables (Debian/Raspberry Pi OS: sudo apt install nftables)")
+
+
 def check_generated_paths() -> None:
-    _section("5. Generated paths")
+    _section("6. Generated paths")
     generated = (
         ("data/pcaps", "bash demo/run_demo.sh"),
         ("logs", "created on the first daemon run"),
@@ -177,7 +196,7 @@ def check_generated_paths() -> None:
 
 
 def check_interface(interface: str) -> None:
-    _section("6. Live capture")
+    _section("7. Live capture")
     if not sys.platform.startswith("linux"):
         _warn("platform", "interface validation is available on Linux only")
         return
@@ -211,6 +230,7 @@ def main() -> int:
     check_dependencies(args.runtime_only)
     check_artifacts()
     check_pipeline()
+    check_response_backend()
     check_generated_paths()
     if args.iface:
         check_interface(args.iface)

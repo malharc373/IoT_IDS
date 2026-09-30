@@ -10,11 +10,15 @@ help stop network attacks on constrained edge hardware*:
 1. **Live edge IDS/IPS** — a streaming sensor prototype. It sniffs traffic,
    aggregates packets into bidirectional flows, and classifies each flow with a
    91.8 KB ONNX model. On the audited Apple M4 host, single-flow inference took
-   8.1 microseconds in the current benchmark snapshot; Raspberry Pi and MCU end-to-end performance remain
-   unvalidated. It detects
+   8.1 microseconds in the current benchmark snapshot. A Raspberry Pi 2
+   compatibility run now measures inference, parsing, live attacks, benign
+   false alarms and reboot behavior; the documented Pi 4 target and MCU
+   end-to-end path remain unvalidated. It detects
    **9 attack types across 4 categories**, reports aggregated per-source
-   incidents, and can **actively block** offenders (IPS mode). The same model
-   also compiles to a **dependency-free C header** for microcontrollers.
+   incidents, and includes an experimental response module. Active blocking is
+   deliberately disabled on real networks because the first live baseline
+   produced unsafe false positives. The same model also compiles to a
+   **dependency-free C header** for microcontrollers.
 
 2. **SFAF cross-dataset study** — eleven public IDS datasets (CICIDS2017,
    UNSW-NB15, TON-IoT, Bot-IoT, CIC-IoT-2023, CICDDoS2019, IoTID20, X-IIoTID,
@@ -30,7 +34,7 @@ help stop network attacks on constrained edge hardware*:
 ```
    ┌────────────────────────── live detection core ────────────────────────────┐
    │ packets → bidirectional flow table → 22-feature vector → model → verdict    │
-   │                                                          ↳ IPS block/limit  │
+   │                                      ↳ dry-run response; enforcement gated  │
    └────────────────────────────────────────────────────────────────────────────┘
        ▲ Mac / dev : synthetic labeled pcaps        (root-free demo)
        ▲ Pi  / live: scapy sniff on eth0 / wlan0    (systemd service, IPS)
@@ -62,7 +66,7 @@ python demo/preflight.py                         # verify deps, artifacts, contr
 bash demo/run_demo.sh                            # generate traffic -> detect -> validate
 ```
 
-Detect + **prevent** (dry-run IPS shows what it *would* block):
+Detect + preview the experimental response policy (dry-run; no firewall changes):
 
 ```bash
 python src/ids_daemon.py --replay data/pcaps/demo_mixed.pcap --ips
@@ -99,8 +103,11 @@ demo, benchmark, and report generation):
 bash demo/verify_capstone.sh
 ```
 
-This intentionally does not simulate or replace the separate Raspberry Pi,
-real-labelled-PCAP, or external-dataset acceptance gates.
+This intentionally does not simulate or replace the separate real-labelled-PCAP
+or external-dataset acceptance gates. Raspberry Pi 2 evidence is tracked under
+[`reports/pi2-acceptance-2026-09-30/`](reports/pi2-acceptance-2026-09-30/)
+and [`reports/pi2-live-2026-09-30/`](reports/pi2-live-2026-09-30/); it is below
+the documented Pi 4 target.
 
 Dependency inputs produce exact transitive Python 3.10 locks with `pip-compile`.
 Use `requirements-dev.txt` on macOS/default development hosts and
@@ -150,7 +157,7 @@ cp .env.example .env                # e.g. IOTIDS_DATASETS_ROOT, IOTIDS_IFACE
 No secrets belong in the repo. The Kaggle API token (for dataset downloads) goes
 at `~/.kaggle/kaggle.json` — see `code/download_datasets.py`.
 
-## Deploy on a Raspberry Pi (IDS or IPS)
+## Deploy on a Raspberry Pi (IDS; experimental response available)
 
 Runtime needs only `onnxruntime + numpy + scapy`. Full walkthrough in
 **[deploy/README_PI.md](deploy/README_PI.md)**.
@@ -158,7 +165,8 @@ Runtime needs only `onnxruntime + numpy + scapy`. Full walkthrough in
 ```bash
 sudo bash deploy/setup_pi.sh eth0        # venv + systemd service
 sudo systemctl start iot-ids
-# IPS mode (actually blocks via nftables/iptables):
+# Experimental enforcement: isolated authorized tests only. The current model
+# produced unsafe false positives on a home LAN; normal deployments stay IDS-only.
 sudo .venv/bin/python src/ids_daemon.py --iface eth0 --prevent --allow 192.168.1.0/24
 ```
 
@@ -204,6 +212,35 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 > the cross-dataset study below, and the open work to validate on a real
 > labelled packet capture compatible with the 22-feature extractor.
 
+### Raspberry Pi 2 live validation (controlled trial, 30 September 2026)
+
+The available board was a Raspberry Pi 2 Model B running 32-bit Raspberry Pi
+OS, below the documented Pi 4/64-bit target. The trial used ordinary home-LAN
+traffic plus seven controlled attacks from devices owned by the operator. It is
+real execution evidence, but seven attacks are not a statistically representative
+real-world accuracy study.
+
+| Measure | Pi 2 result |
+|---|---|
+| Model/runtime | Same 10-class model; C backend by default; armv7 ONNX Runtime 1.23.2 also verified |
+| Controlled attacks | 7/7 raised an incident; 5/7 had the correct label at confidence ≥ 0.9 |
+| Benign baseline | 19 false-alarm incidents in 10 min (1.9/min); 13/19 survived a ≥ 0.9 confidence gate |
+| Single-flow C daemon path | 535 µs (p99 799 µs) |
+| Batched C inference | 17,506 flows/s at batch 1024 |
+| Packet parsing / end to end | 6,758 packets/s / 1,316 flows/s |
+| Flood capture | About 12–14% of offered ~2k pps loopback flood traffic processed |
+| Runtime footprint | 39–70 MB RSS; 50–56 °C; no throttling observed |
+| Reboot recovery | SSH in 80 s; fresh sensor heartbeat in 99 s; `NRestarts=0` |
+| Soak | 24-hour collection started; final outcome pending |
+
+The UDP flood was detected as an attack but labelled `xmas_scan`; the ICMP
+flood was weak (0.52 confidence), and SSH brute force was late and represented
+only 2 of roughly 40 connections. Confidence alone did not remove benign false
+alarms. An enforcement experiment blocked the attacker but also affected
+innocent devices and the router, so automatic blocking is **not safe to enable**
+with the current model. Full commands, raw evidence and limitations:
+[`reports/pi2-live-2026-09-30/README.md`](reports/pi2-live-2026-09-30/README.md).
+
 ### Cross-dataset generalization (protocol corrected; rerun pending)
 
 Eleven datasets align to the 12-feature space. The corrected protocol trains on
@@ -235,9 +272,9 @@ numbers would be fabrication. The affected artifacts are quarantined under
 | Daemon memory | **55.1 MB** (onnxruntime + numpy) |
 | Model size | 91.8 KB ONNX / ~43 KB C const |
 
-The host benchmark is encouraging, but Raspberry Pi throughput remains an
-unvalidated projection until the hardware acceptance run is captured. Full
-report: [`demo/results/BENCHMARK.md`](demo/results/BENCHMARK.md).
+The host benchmark is not a Pi projection. Measured Pi 2 compatibility results
+are reported separately above; formal Pi 4 acceptance and the full soak remain
+open. Full host report: [`demo/results/BENCHMARK.md`](demo/results/BENCHMARK.md).
 
 ### Reproducing the SFAF datasets
 

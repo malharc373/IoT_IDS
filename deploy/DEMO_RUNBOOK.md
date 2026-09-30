@@ -54,18 +54,21 @@ the Xmas scan run:
 sudo python attacks/live_demo.py --only portscan synflood slowloris xmas_scan
 ```
 
-These four label **cleanly and fast** (portscan ~1.00, xmas_scan ~0.97,
-synflood ~0.99, slowloris ~0.92). The script narrates each step and pauses
-after it, so you can point at the dashboard as each incident appears and then
-settles.
+These four were selected because the earlier controlled Pi run detected them
+clearly (portscan ~1.00, xmas_scan ~0.97, synflood ~0.99, slowloris ~0.92).
+That evidence does not guarantee identical labels in a fresh loopback run, so
+describe what the dashboard actually shows. The script narrates each step and
+pauses after it.
 
 Talking points as it runs:
-- Benign background traffic runs the whole time and does **not** raise incidents
-  — the IDS leaves ordinary traffic alone.
+- Benign background traffic runs throughout to give the attack timeline
+  context. It can raise false incidents: the measured LAN baseline was about
+  1.9 incidents/min, which is why this remains an IDS-first demonstration.
 - Each attack shows up as a **per-source incident** with a category/type label
   and a confidence, not a flood of raw packet alerts.
-- The C inference backend is doing the classification — no onnxruntime on this
-  32-bit board.
+- Classification runs locally on the Pi. State the active backend shown by the
+  service logs; both the C engine and the separately built 32-bit ARM
+  onnxruntime were benchmarked, so do not imply only one can run on the board.
 
 To show the full range (all nine classes, ~5 min): drop `--only`. Add `--fast`
 for a shorter run.
@@ -84,8 +87,8 @@ for a shorter run.
 ## 3. Reset between runs
 
 ```bash
-# clears the visible incident window; safe to run repeatedly
-: > logs/alerts.jsonl
+# Preserve the evidence log; note the current time to separate the next run.
+date -Iseconds
 sudo systemctl restart iot-ids
 ```
 

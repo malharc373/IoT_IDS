@@ -113,8 +113,8 @@ class Benign(threading.Thread):
 # ── attacks ───────────────────────────────────────────────────────────────────
 def run_cmd(cmd, timeout):
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True,
-                           timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
+                           check=False)
         return (r.stdout + r.stderr).strip()
     except subprocess.TimeoutExpired:
         return "(timed out — expected for held-open attacks)"
@@ -123,19 +123,23 @@ def run_cmd(cmd, timeout):
 
 
 def portscan(t, fast):
-    if not have("nmap"):
+    nmap = shutil.which("nmap")
+    if not nmap:
         return "skip", "nmap not installed"
     n = 300 if fast else 1000
-    return "portscan", run_cmd(f"nmap -sT -Pn -p1-{n} --max-rate 300 {t}", 120)
+    return "portscan", run_cmd(
+        [nmap, "-sT", "-Pn", f"-p1-{n}", "--max-rate", "300", t], 120)
 
 
 def xmas(t, fast):
-    if not have("nmap"):
+    nmap = shutil.which("nmap")
+    if not nmap:
         return "skip", "nmap not installed"
     if os.geteuid() != 0:
         return "skip", "Xmas scan needs root (raw packets)"
     n = 300 if fast else 1000
-    return "xmas_scan", run_cmd(f"nmap -sX -Pn -p1-{n} --max-rate 300 {t}", 120)
+    return "xmas_scan", run_cmd(
+        [nmap, "-sX", "-Pn", f"-p1-{n}", "--max-rate", "300", t], 120)
 
 
 def _hping(t, args, secs):
@@ -144,39 +148,46 @@ def _hping(t, args, secs):
     if os.geteuid() != 0:
         return None, "flood needs root (raw sockets)"
     hp = shutil.which("hping3")
-    return "ok", run_cmd(f"timeout {secs} {hp} {args} {t} 2>&1 | tail -2", secs + 5)
+    return "ok", run_cmd([hp, *args, t], secs)
 
 
 def synflood(t, fast):
-    ok, out = _hping(t, "-S -p 80 -i u500", 15 if fast else 20)
+    ok, out = _hping(t, ["-S", "-p", "80", "-i", "u500"], 15 if fast else 20)
     return ("synflood" if ok else "skip"), out
 
 
 def udpflood(t, fast):
-    ok, out = _hping(t, "--udp -p 53 -i u500", 15 if fast else 20)
+    ok, out = _hping(t, ["--udp", "-p", "53", "-i", "u500"], 15 if fast else 20)
     return ("udpflood" if ok else "skip"), out
 
 
 def icmpflood(t, fast):
-    ok, out = _hping(t, "--icmp -i u500", 15 if fast else 20)
+    ok, out = _hping(t, ["--icmp", "-i", "u500"], 15 if fast else 20)
     return ("icmpflood" if ok else "skip"), out
 
 
 def ssh_bruteforce(t, fast):
     n = 20 if fast else 40
-    cmd = (f"for i in $(seq 1 {n}); do "
-           f"ssh -o BatchMode=yes -o PubkeyAuthentication=no "
-           f"-o PreferredAuthentications=password -o ConnectTimeout=3 "
-           f"-o StrictHostKeyChecking=no nosuchuser@{t} true 2>/dev/null; "
-           f"sleep 0.2; done; echo '{n} login attempts'")
-    return "ssh_bruteforce", run_cmd(cmd, 120)
+    ssh = shutil.which("ssh")
+    if not ssh:
+        return "skip", "ssh client not installed"
+    cmd = [
+        ssh, "-o", "BatchMode=yes", "-o", "PubkeyAuthentication=no",
+        "-o", "PreferredAuthentications=password", "-o", "ConnectTimeout=3",
+        "-o", "StrictHostKeyChecking=no", f"nosuchuser@{t}", "true",
+    ]
+    for _ in range(n):
+        run_cmd(cmd, 5)
+        time.sleep(0.2)
+    return "ssh_bruteforce", f"{n} login attempts"
 
 
 def slowloris(t, fast):
     conns, dur = (20, 20) if fast else (40, 40)
     port = 8080
     return "slowloris", run_cmd(
-        f"python3 {HERE}/slowloris.py {t} {port} {conns} {dur}", dur + 15)
+        [sys.executable, os.path.join(HERE, "slowloris.py"), t, str(port),
+         str(conns), str(dur)], dur + 15)
 
 
 def mqtt_flood(t, fast):
@@ -251,7 +262,11 @@ def main():
                     help="also permit the packet floods against a remote target")
     args = ap.parse_args()
 
-    target = args.target
+    try:
+        target = str(ipaddress.ip_address(args.target))
+    except ValueError:
+        say(f"Target must be a literal IPv4 or IPv6 address, got {args.target!r}.", YEL)
+        return 2
     local = is_local(target)
     if not local and not args.i_own_the_target:
         say(f"Refusing to attack non-local target {target!r} without "

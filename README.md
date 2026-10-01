@@ -331,7 +331,7 @@ real-world accuracy study.
 | Flood capture | About 12–14% of offered ~2k pps loopback flood traffic processed |
 | Runtime footprint | 39–70 MB RSS; 50–56 °C; no throttling observed |
 | Reboot recovery | SSH in 80 s; fresh sensor heartbeat in 99 s; `NRestarts=0` |
-| Soak | 24-hour collection started; final outcome pending |
+| Soak | 14.4 h partial (stopped by hand): 0 restarts, 0 drops, RSS 53.5–63.0 MB |
 
 The UDP flood was detected as an attack but labelled `xmas_scan`; the ICMP
 flood was weak (0.52 confidence), and SSH brute force was late and represented

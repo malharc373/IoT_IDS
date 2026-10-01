@@ -136,10 +136,23 @@ unit tests but have not been re-run in enforce mode on the Pi):
 
 ## 5. Soak
 
-`scripts/soak.sh` records a CSV row every 5 minutes for 24 h
-([first rows](raw/soak-start.csv)): service state, restarts, sensor RSS, CPU
-temperature and throttle bits, eth0 drops, packet and incident counts. It
-started at 20:25 on 30 Sep; results are added when it finishes.
+`scripts/soak.sh` recorded a CSV row every 5 minutes
+([all rows](raw/soak.csv), [first rows](raw/soak-start.csv)): service state,
+restarts, sensor RSS, CPU temperature and throttle bits, eth0 drops, packet and
+incident counts. It was planned for 24 h and **stopped by hand after 14.4 h**,
+before the report deadline, so it is a partial soak.
+
+| Measure | Value |
+|---|---|
+| Window | 20:25 on 30 Sep to 10:47 on 1 Oct (173 samples, 14.4 h) |
+| Service | active in every sample; `NRestarts` 0 |
+| eth0 packets dropped | 0 (about 98,800 packets received over the window) |
+| Sensor RSS | 53.5–63.0 MB |
+| CPU temperature | 50.3–55.1 °C; throttle bits 0x0 throughout |
+
+The window includes the second benign baseline (§2b) but no attacks. RSS rose
+from 53.5 to 62.4 MB over the first 7 hours and then by only 0.6 MB over the
+last 7; a full 24-hour run is still needed to rule out a slow leak.
 
 ## Recommendations
 

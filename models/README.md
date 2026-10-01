@@ -39,7 +39,7 @@ configures an unknown-class enforcement threshold.
 - no calibrated operating threshold or validated unknown-attack detector;
 - host-context features may shift with placement and observation window;
 - Raspberry Pi 4 (64-bit) throughput is not measured; a Raspberry Pi 2
-  (32-bit) run is measured and a 24-hour soak is in progress;
+  (32-bit) run is measured, including a 14.4-hour partial soak;
 - MCU use is inference only: there is no on-device feature extraction or
   capture, and nothing has been measured on an ESP32;
 - on real LAN traffic the model raised about 1.9 false-alarm incidents per

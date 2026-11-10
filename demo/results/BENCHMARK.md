@@ -1,8 +1,8 @@
 # IoT-IDS system benchmark
 
 ```
-IoT-IDS SYSTEM BENCHMARK   host=macOS-26.6.2-arm64-arm-64bit
-python=3.10.14  time=2026-09-30 21:58
+IoT-IDS SYSTEM BENCHMARK   host=Linux-6.18.44-fc-v310-x86_64-with-glibc2.39
+python=3.10.20  time=2026-11-10 00:34
 
 ====================================================================
   1. MODEL PARAMETERS & FOOTPRINT
@@ -27,33 +27,36 @@ python=3.10.14  time=2026-09-30 21:58
   2. ONNX INFERENCE LATENCY & THROUGHPUT
 ====================================================================
    batch   mean_ms   p50_ms   p99_ms   us/flow      flows/s
-       1    0.0091   0.0082   0.0126     9.113      109,734
-       8    0.0449   0.0442   0.0547     5.612      178,201
-      32    0.2312   0.1647   0.5161     7.225      138,402
-      64    0.1862   0.1740   0.2461     2.909      343,780
-     128    0.3404   0.3255   0.4585     2.659      376,036
-     512    1.3138   1.3110   1.6033     2.566      389,702
-    1024    2.6999   2.5378   5.2319     2.637      379,271
+       1    0.0097   0.0094   0.0239     9.707      103,018
+       8    0.0671   0.0652   0.0880     8.392      119,165
+      32    0.3026   0.2742   0.5856     9.455      105,760
+      64    0.2193   0.1864   0.5404     3.427      291,784
+     128    0.3885   0.3498   0.7268     3.035      329,492
+     512    1.2883   1.2378   2.1281     2.516      397,410
+    1024    2.5078   2.4198   4.5634     2.449      408,321
 
-  single-flow latency    : 9.1 us (p99 12.6 us)
-  peak throughput        : 389,702 flows/s (batch 512)
+  single-flow latency    : 9.7 us (p99 23.9 us)
+  peak throughput        : 408,321 flows/s (batch 1024)
 
 ====================================================================
   3. NATIVE C MODEL (MCU PATH)
 ====================================================================
-  C ids_predict latency  : 1138.1 ns/flow (1.138 us)
-  C throughput           : 878,623 flows/s (single thread)
+  C ids_predict latency  : 1597.4 ns/flow (1.597 us)
+  C throughput           : 626,009 flows/s (single thread)
   runtime deps           : none (pure C99, ~130 B stack)
 
 ====================================================================
   4. FEATURE EXTRACTION THROUGHPUT
 ====================================================================
-  (skipped — no demo pcap)
+  pcap                   : demo_mixed.pcap (17,850 packets -> 4,674 flows)
+  parse+read             : 17.6 ms (1,016,893 packets/s)
+  parse+aggregate        : 138.4 ms (129,003 packets/s, 33,779 flows/s)
 
 ====================================================================
   5. END-TO-END (pcap -> verdicts)
 ====================================================================
-  (section FAILED — FileNotFoundError: [Errno 2] No such file or directory: '/Users/malharfalke/IOT-IDS-scope/data/pcaps/demo_mixed.pcap')
+  4,674 flows classified in 131.4 ms (35,575 flows/s end-to-end)
+  detected 4,573 attack flows / 101 benign
 
 ====================================================================
   6. ACCURACY (held-out, unseen-seed synthetic)
@@ -81,16 +84,16 @@ python=3.10.14  time=2026-09-30 21:58
 ====================================================================
   7. MEMORY FOOTPRINT
 ====================================================================
-  daemon runtime RSS     : 56.3 MB (onnxruntime + numpy only, clean process)
-  benchmark process RSS  : 306.0 MB (harness — imports pandas/xgboost; NOT the daemon)
+  daemon runtime RSS     : 57.8 MB (onnxruntime + numpy only, clean process)
+  benchmark process RSS  : 316.5 MB (harness — imports pandas/xgboost; NOT the daemon)
   edge runtime deps      : onnxruntime + numpy (+ scapy for live sniff)
   MCU C model RAM        : ~130 bytes stack, 0 heap
 
 ====================================================================
-  8. TARGET-HARDWARE ACCEPTANCE GATE
+  8. TARGET HARDWARE
 ====================================================================
-  measured host          : macOS-26.6.2-arm64-arm-64bit
-  Raspberry Pi result    : NOT MEASURED
+  measured host          : Linux-6.18.44-fc-v310-x86_64-with-glibc2.39
+  this run               : NOT a Raspberry Pi; numbers above are host-only
   projection             : intentionally omitted; host scaling is not evidence
-  acceptance gate        : run this benchmark on the target Pi and retain the identity, hashes, raw output and soak record in deploy/PI_ACCEPTANCE.md
+  Pi 2 measurements      : run on the board itself; see reports/pi2-acceptance-2026-09-30/ and reports/pi2-live-2026-09-30/
 ```

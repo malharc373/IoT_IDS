@@ -1,20 +1,17 @@
 # Deploying the IoT-IDS sensor on a Raspberry Pi
 
 End-to-end walkthrough: flash → connect → copy → install → run → demonstrate.
-Target: **Raspberry Pi 4 with 64-bit Raspberry Pi OS and glibc 2.28+**. The
-dependency lock has CPython 3.10 aarch64 wheels available for its native
-packages. The 64-bit path was built first, but no Pi 4 was available, so it
-has not run on a Pi 4 yet.
-
-What has run on hardware is a **Raspberry Pi 2 on 32-bit Raspberry Pi OS**.
-onnxruntime has no 32-bit ARM wheels, so a 32-bit path was added for the same
-model (see *32-bit Pi* in §4). Its results, including real attacks, benign
+Deployment platform: **Raspberry Pi 2 Model B on 32-bit Raspberry Pi OS**.
+onnxruntime has no 32-bit ARM wheels, so the Pi 2 runs the same model through
+its C export (see *32-bit Pi* in §4). A 64-bit Pi OS (aarch64) path using
+onnxruntime's official wheels is also supported and runs in CI, but it was not
+used on hardware in this project. Its results, including real attacks, benign
 false alarms, reboot recovery and an IPS enforce test, are in
 [`reports/pi2-acceptance-2026-09-30/`](../reports/pi2-acceptance-2026-09-30/README.md)
 and [`reports/pi2-live-2026-09-30/`](../reports/pi2-live-2026-09-30/README.md).
 A partial soak ran 14.4 hours with 0 restarts and 0 packet drops; a full
 24-hour run is still pending. Host inference timings are not a substitute for
-the Pi 4 acceptance run.
+measurements on the Pi.
 
 The edge model (`models/live_ids.onnx`, 91.8 KB) takes raw flow features — trees
 are scale-invariant, so there is no scaler to ship or drift — and the Pi needs
@@ -91,8 +88,8 @@ labels, probabilities within 1e-5), and on the Pi 2 it matched 64-bit
 onnxruntime on 5,000 inputs. If you need onnxruntime itself on 32-bit, build
 the wheel with [`onnxruntime-armv7/`](onnxruntime-armv7/README.md). It gives
 the same answers, but on a Pi 2 it is about half as fast in batch, so C stays
-the default. Force an engine with `--backend onnx|c`. A 32-bit Pi is below the documented Pi 4 target; the
-benchmark labels such a run so it is not mistaken for the acceptance run.
+the default. Force an engine with `--backend onnx|c`. The benchmark records the
+exact board, architecture and backend for every Pi run.
 
 The same preflight can be run before installation or a demonstration:
 

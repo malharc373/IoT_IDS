@@ -1926,9 +1926,9 @@ def t_current_claims_are_evidence_scoped():
 
     readme = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read()
     for supported in [
-        "99.65%", "0.9961", "91.8 KB", "8.1 µs/flow", "403,058 flows/s",
+        "99.65%", "0.9961", "91.8 KB", "9.7 µs/flow", "408,321 flows/s",
         "7/7 raised an incident", "19 false-alarm incidents",
-        "formal Pi 4 acceptance",
+        "14.4 h partial", "no hardware result is claimed",
     ]:
         assert supported in readme, f"README lost evidence/scope marker: {supported}"
 

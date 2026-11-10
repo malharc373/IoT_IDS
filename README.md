@@ -9,17 +9,16 @@ help stop network attacks on constrained edge hardware*:
 
 1. **Live edge IDS/IPS** — a streaming sensor prototype. It sniffs traffic,
    aggregates packets into bidirectional flows, and classifies each flow with a
-   91.8 KB ONNX model. On the audited Apple M4 host, single-flow inference took
-   8.1 microseconds in the current benchmark snapshot. A Raspberry Pi 2
-   compatibility run now measures inference, parsing, live attacks, benign
-   false alarms and reboot behavior; the documented Pi 4 target and MCU
-   end-to-end path remain unvalidated. It detects
+   91.8 KB ONNX model. The deployment platform is a **Raspberry Pi 2 Model B
+   (32-bit)**, where inference, parsing, live attacks, benign false alarms,
+   reboot recovery and a 14.4-hour soak were measured. It detects
    **9 attack types across 4 categories**, reports aggregated per-source
    incidents, and includes an experimental response module. Active blocking is
    deliberately disabled on real networks because the first live baseline
    produced unsafe false positives. The same model also compiles to a
-   **dependency-free C header** for microcontrollers (inference only so far;
-   see *Scope and status*).
+   **dependency-free C header**; that header is the Pi 2's inference engine,
+   and a minimal ESP32 sketch shows it compiling into microcontroller code
+   (inference example only; see *Scope and status*).
 
 2. **SFAF cross-dataset study** — eleven public IDS datasets (CICIDS2017,
    UNSW-NB15, TON-IoT, Bot-IoT, CIC-IoT-2023, CICDDoS2019, IoTID20, X-IIoTID,
@@ -44,19 +43,14 @@ help stop network attacks on constrained edge hardware*:
 
 ## Scope and status
 
-What the project has shown, and what it has not, as of 30 September 2026.
+What the project has shown, and what it has not.
 
-### Raspberry Pi: 64-bit first, then 32-bit
+### Raspberry Pi: the Pi 2 is the deployment platform
 
-- **Designed for 64-bit.** The deployment target is a Raspberry Pi 4 on 64-bit
-  Raspberry Pi OS (aarch64). There the sensor runs the ONNX model through
-  onnxruntime's official aarch64 wheels, and the dependency lock is built for
-  it. This path runs on 64-bit development hosts and in CI. It has **not** yet
-  run on a Pi 4, because no Pi 4 was available.
-- **Then made to work on 32-bit.** The available board was a Raspberry Pi 2
-  Model B on 32-bit Raspberry Pi OS (armv7l). onnxruntime publishes no 32-bit
-  ARM wheels, so the 64-bit install cannot work there. Two 32-bit runtimes
-  were added for the **same trained model** (it was not retrained):
+- **Final platform: Raspberry Pi 2 Model B on 32-bit Raspberry Pi OS
+  (armv7l).** All hardware results in this repository come from this board.
+  onnxruntime publishes no 32-bit ARM wheels, so two 32-bit runtimes were
+  added for the **same trained model** (it was not retrained):
   1. **C backend (default on 32-bit):** the model's C export
      (`models/live_ids.h`) is compiled on the Pi and called through ctypes
      (`src/c_backend.py`). The installer selects it automatically on
@@ -69,8 +63,10 @@ What the project has shown, and what it has not, as of 30 September 2026.
   1.07e-6). On the Pi 2 the C backend is about 2× faster in batch; the armv7
   onnxruntime wheel is faster for a single flow. C stays the default because it
   also needs no custom wheel.
-- A Pi 2 is below the Pi 4 target. Its results show the system works on
-  constrained 32-bit hardware; they are not the Pi 4 acceptance run.
+- **64-bit path (supported, not hardware-tested).** On a 64-bit Pi OS
+  (aarch64) the installer uses onnxruntime's official wheels and the locked
+  dependencies. That path runs on 64-bit hosts and in CI, but no 64-bit Pi was
+  used in this project, so no hardware result is claimed for it.
 
 ### IPS (prevention): a tested mechanism, not a safe protection
 
@@ -104,34 +100,27 @@ The installed service therefore runs IDS-only. `--ips` shows what the responder
 *would* do without touching the firewall. `--prevent` belongs only on an
 isolated test network.
 
-### ESP32 (microcontroller): the model runs, the IDS does not exist yet
+### C export and the ESP32 inference example
 
-Done:
-- The model exports to a dependency-free C99 header (`models/live_ids.h`).
+The deliverable here is the **dependency-free C model**, not an ESP32
+intrusion detector:
+
+- The model exports to a C99 header (`models/live_ids.h`).
   `src/export_c.py --verify` checks its decisions against the XGBoost model.
-  The 32-bit Pi runs this same header, so the C code has run on real ARM
-  hardware.
+  It is the default inference engine on the Raspberry Pi 2, so the C code has
+  run on real ARM hardware.
 - Footprint of an `-Os` build on the development host: about 49 KB of
   constant data (a 43 KB node table plus a 6 KB per-tree index), about 240 B
-  of code, and no heap. The constant data is the same size on an ESP32, and it
-  is well within the chip's flash and RAM.
-- A minimal Arduino sketch ([`deploy/esp32_iot_ids/`](deploy/esp32_iot_ids/esp32_iot_ids.ino))
-  calls the model and prints the class over Serial.
+  of code, and no heap. The constant data would be the same size on an ESP32,
+  well within the chip's flash and RAM.
+- [`deploy/esp32_iot_ids/`](deploy/esp32_iot_ids/esp32_iot_ids.ino) is a
+  minimal **inference example**: it calls the model on a fixed placeholder
+  vector and prints the class over Serial. It is not a detector, has not been
+  flashed to a board, and nothing is claimed about ESP32 accuracy or speed.
 
-Not done:
-- The sketch has **not** been compiled with the ESP32 toolchain or flashed to a
-  board.
-- **No on-device feature extraction.** The sketch feeds a vector of zeros,
-  which the model labels `icmpflood`; that is a placeholder, not an
-  observation. The 22-feature flow table in `src/flow_features.py` has to be
-  ported to C and checked against the Python version.
-- **No capture path.** An ESP32 cannot see a switched wired LAN. To observe
-  the kind of flows the model was trained on, it has to sit inline, for
-  example as the Wi-Fi access point the IoT devices join. Passive Wi-Fi
-  sniffing would need a different feature set and retraining.
-
-On-device ESP32 detection is targeted for the final project review (October
-2026). See [`deploy/README_MCU.md`](deploy/README_MCU.md).
+An ESP32 detector would additionally need the 22-feature flow table ported to
+C and an inline capture position (for example as the Wi-Fi access point); both
+are out of scope. See [`deploy/README_MCU.md`](deploy/README_MCU.md).
 
 ### Attack taxonomy (hierarchical)
 
@@ -202,8 +191,7 @@ bash demo/verify_capstone.sh
 This intentionally does not simulate or replace the separate real-labelled-PCAP
 or external-dataset acceptance gates. Raspberry Pi 2 evidence is tracked under
 [`reports/pi2-acceptance-2026-09-30/`](reports/pi2-acceptance-2026-09-30/)
-and [`reports/pi2-live-2026-09-30/`](reports/pi2-live-2026-09-30/); it is below
-the documented Pi 4 target.
+and [`reports/pi2-live-2026-09-30/`](reports/pi2-live-2026-09-30/).
 
 Dependency inputs produce exact transitive Python 3.10 locks with `pip-compile`.
 Use `requirements-dev.txt` on macOS/default development hosts and
@@ -290,7 +278,7 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 | Benign false-positive rate | **0.0%** |
 | Mirai recall | 94.2% |
 | Model size (ONNX / C const-data) | 91.8 KB / ~49 KB |
-| Host ONNX inference | 8.1 µs/flow (p99 11.2 µs) |
+| Host ONNX inference (x86 reference host) | 9.7 µs/flow (p99 23.9 µs) |
 
 > **Read this number as a property of the generators, not of the detector.**
 > Three things were checked to find out what the ~100% actually means, and all
@@ -314,8 +302,8 @@ attacks (bursty transfers with flood-like rates, multi-endpoint telemetry):
 
 ### Raspberry Pi 2 live validation (controlled trial, 30 September 2026)
 
-The available board was a Raspberry Pi 2 Model B running 32-bit Raspberry Pi
-OS, below the documented Pi 4/64-bit target. The trial used ordinary home-LAN
+The deployment board is a Raspberry Pi 2 Model B running 32-bit Raspberry Pi
+OS. The trial used ordinary home-LAN
 traffic plus seven controlled attacks from devices owned by the operator. It is
 real execution evidence, but seven attacks are not a statistically representative
 real-world accuracy study.
@@ -361,20 +349,23 @@ numbers would be fabrication. The affected artifacts are quarantined under
 `legacy/resubstitution-results/`; the live status and reproduction gate are in
 [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
-### System benchmark (Apple M4; `python demo/benchmark.py`)
+### System benchmark (x86 reference host; `python demo/benchmark.py`)
+
+Intel Xeon @ 2.30 GHz cloud VM, Linux, Python 3.10, 10 November 2026. Every
+section completed; the accuracy section reproduces the table above exactly.
 
 | | |
 |---|---|
-| ONNX inference | 8.1 µs/flow single (p99 11.2), **403,058 flows/s** at batch 512 |
-| Native C model | **1.136 µs/flow**, 880,460 flows/s, ~130 B stack, zero deps |
-| Feature extraction | 215,601 packets/s; 56,455 flows/s |
-| End to end | 52,249 flows/s |
-| Daemon memory | **55.1 MB** (onnxruntime + numpy) |
+| ONNX inference | 9.7 µs/flow single (p99 23.9), **408,321 flows/s** at batch 1024 |
+| Native C model | **1.597 µs/flow**, 626,009 flows/s, ~130 B stack, zero deps |
+| Feature extraction | 129,003 packets/s; 33,779 flows/s |
+| End to end | 35,575 flows/s |
+| Daemon memory | **57.8 MB** (onnxruntime + numpy) |
 | Model size | 91.8 KB ONNX / ~49 KB C const |
 
-The host benchmark is not a Pi projection. Measured Pi 2 compatibility results
-are reported separately above; formal Pi 4 acceptance and the full soak remain
-open. Full host report: [`demo/results/BENCHMARK.md`](demo/results/BENCHMARK.md).
+The host benchmark is not a Pi projection; measured Pi 2 results are reported
+separately above. A full 24-hour soak is still open (14.4 h was recorded).
+Full host report: [`demo/results/BENCHMARK.md`](demo/results/BENCHMARK.md).
 
 ### Reproducing the SFAF datasets
 

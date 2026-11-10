@@ -12,7 +12,8 @@ model (see *32-bit Pi* in §4). Its results, including real attacks, benign
 false alarms, reboot recovery and an IPS enforce test, are in
 [`reports/pi2-acceptance-2026-09-30/`](../reports/pi2-acceptance-2026-09-30/README.md)
 and [`reports/pi2-live-2026-09-30/`](../reports/pi2-live-2026-09-30/README.md).
-A 24-hour soak is in progress. Host inference timings are not a substitute for
+A partial soak ran 14.4 hours with 0 restarts and 0 packet drops; a full
+24-hour run is still pending. Host inference timings are not a substitute for
 the Pi 4 acceptance run.
 
 The edge model (`models/live_ids.onnx`, 91.8 KB) takes raw flow features — trees

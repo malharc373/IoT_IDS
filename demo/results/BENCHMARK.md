@@ -79,7 +79,7 @@ python=3.10.20  time=2026-11-10 00:34
     mqtt_flood       100.0%
 
   NOTE: synthetic traffic is separable; see CROSS_DATASET_FINDINGS.md
-        cross-dataset exact numbers withdrawn; protocol-correct rerun pending.
+        cross-dataset (corrected rerun): in-domain AUC 0.979, cross-domain 0.497.
 
 ====================================================================
   7. MEMORY FOOTPRINT

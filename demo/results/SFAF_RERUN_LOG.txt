@@ -1,0 +1,155 @@
+datasets root: /Volumes/GOAT/College/Btech_Project/Datasets
+  present 11/11
+
+$ /opt/homebrew/Caskroom/mambaforge/base/bin/python code/cross_dataset_eval.py --cap 50000
+Loading 11 datasets (cap 50,000/dataset)...
+  loaded cicids2017         n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=2,867/2,830,743
+  loaded unsw_nb15          n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=3,607/257,673
+  loaded ton_iot            n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=60,013/211,043
+  loaded bot_iot            n= 50,000 attack%= 99.9 trivial_F1=0.999
+  loaded cicddos2019        n= 50,000 attack%= 50.0 trivial_F1=0.667
+  loaded iotid20            n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=368/625,783
+  loaded x_iiotid           n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=223,872/820,834
+  loaded mqtt_iot_ids2020   n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=52,746/259,379
+  loaded cic_iot_2023       n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=68/1,800,000
+  loaded wustl_iiot         n= 50,000 attack%= 50.0 trivial_F1=0.667
+  loaded iot_23             n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=300,435/449,408
+
+=== Experiment 1: NxN cross-dataset transfer matrix ===
+  trained per-dataset models on fixed stratified 80% splits
+  wrote AUC / F1 / lift matrices and cross_dataset_metrics_long.csv
+
+  --------------------------------------------------------------
+  metric         in-domain  cross-domain       gap    chance
+  --------------------------------------------------------------
+  roc_auc            0.979         0.497     0.482     0.500
+  ap                 0.976         0.601     0.376    = prev
+  mcc                0.898        -0.014     0.911     0.000
+  bal_acc            0.944         0.496     0.448     0.500
+  f1                 0.953         0.458     0.496= 2p/(1+p)
+  --------------------------------------------------------------
+
+  off-diagonal cells at or below the trivial all-attack baseline: 94/110 (85%)
+  off-diagonal cells with ROC-AUC <= 0.55 (no usable signal)      : 65/110 (59%)
+
+  Read the AUC matrix first: it separates 'no signal transfers' from
+  'signal transfers but the decision threshold moved'.
+
+=== Experiment 2: pooled-train, held-out test ===
+
+  pooled train on ['cicids2017', 'unsw_nb15', 'ton_iot', 'bot_iot', 'cic_iot_2023'] (n=250,000)
+    held out              AUC     AP    MCC  balAcc     F1   triv   lift    FPR
+    cicddos2019         0.930  0.861  0.300   0.610  0.410  0.667 -0.257  0.051
+    iotid20             0.513  0.525 -0.049   0.494  0.019  0.667 -0.647  0.022
+    x_iiotid            0.594  0.668  0.099   0.542  0.636  0.667 -0.030  0.716
+    mqtt_iot_ids2020    0.979  0.969  0.788   0.885  0.871  0.667 +0.205  0.008
+    wustl_iiot          0.347  0.607 -0.052   0.495  0.661  0.667 -0.006  0.995
+    iot_23              0.442  0.479 -0.010   0.498  0.657  0.667 -0.010  0.965
+  wrote /Volumes/GOAT-Projects/Projects/IOT-IDS/demo/results/cross_dataset_heldout.csv
+
+$ /opt/homebrew/Caskroom/mambaforge/base/bin/python code/transfer_experiment.py --cap 25000
+Loading 11 datasets (cap 25,000)...
+  11 datasets, 275,000 rows
+
+transform              AUC    ±sd  worst  >chance     MCC      F1    lift
+--------------------------------------------------------------------------
+raw_standard         0.612  0.211  0.275     7/11   0.094   0.502  -0.194
+log_standard         0.571  0.210  0.200     7/11   0.076   0.496  -0.201
+log_robust           0.572  0.230  0.048     9/11   0.068   0.488  -0.209
+ratios_standard      0.513  0.188  0.105     7/11   0.019   0.413  -0.284
+ratios_log           0.537  0.235  0.121     6/11   0.061   0.448  -0.249
+quantile             0.609  0.193  0.228     8/11   0.075   0.520  -0.177
+log_quantile         0.646  0.202  0.220     9/11   0.188   0.566  -0.131
+--------------------------------------------------------------------------
+
+Ranked by ROC-AUC (threshold-free). Chance = 0.500, MCC chance = 0.000.
+best: log_quantile AUC=0.646 (sd 0.202 across 11 folds, worst fold 0.220) vs baseline raw_standard AUC=0.612 (lift +0.034)
+NOTE: the lift is smaller than the fold-to-fold spread — it is not distinguishable from which datasets happen to be held out.
+WARNING: the best transform's F1 is at or below the trivial all-attack baseline — treat any F1-based claim as degenerate.
+wrote /Volumes/GOAT-Projects/Projects/IOT-IDS/demo/results/transfer_comparison.csv
+
+$ /opt/homebrew/Caskroom/mambaforge/base/bin/python code/threshold_transfer.py --cap 50000 --repeats 20
+Loading 11 datasets (cap 50,000/dataset)...
+  loaded cicids2017         n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=2,867/2,830,743
+  loaded unsw_nb15          n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=3,607/257,673
+  loaded ton_iot            n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=60,013/211,043
+  loaded bot_iot            n= 50,000 attack%= 99.9 trivial_F1=0.999
+  loaded cicddos2019        n= 50,000 attack%= 50.0 trivial_F1=0.667
+  loaded iotid20            n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=368/625,783
+  loaded x_iiotid           n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=223,872/820,834
+  loaded mqtt_iot_ids2020   n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=52,746/259,379
+  loaded cic_iot_2023       n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=68/1,800,000
+  loaded wustl_iiot         n= 50,000 attack%= 50.0 trivial_F1=0.667
+  loaded iot_23             n= 50,000 attack%= 50.0 trivial_F1=0.667 missing-supplied=300,435/449,408
+
+  pooled train on ['cicids2017', 'unsw_nb15', 'ton_iot', 'bot_iot', 'cic_iot_2023'] (n=250,000)
+
+  cicddos2019   AUC=0.930  default F1=0.410  oracle F1=0.920  (trivial 0.667, oracle lift +0.254)
+         10 labels -> F1 0.885  ( 93.1% of the calibration gap; calibrated 20/20 draws)
+         25 labels -> F1 0.905  ( 97.0% of the calibration gap; calibrated 20/20 draws)
+         50 labels -> F1 0.912  ( 98.4% of the calibration gap; calibrated 20/20 draws)
+        100 labels -> F1 0.916  ( 99.1% of the calibration gap; calibrated 20/20 draws)
+        250 labels -> F1 0.918  ( 99.6% of the calibration gap; calibrated 20/20 draws)
+        500 labels -> F1 0.919  ( 99.7% of the calibration gap; calibrated 20/20 draws)
+       1000 labels -> F1 0.918  ( 99.6% of the calibration gap; calibrated 20/20 draws)
+
+  iotid20   AUC=0.513  default F1=0.019  oracle F1=0.667  (trivial 0.667, oracle lift +0.000)  <-- DEGENERATE: best threshold == all-attack
+         10 labels -> F1 0.595  ( 88.9% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+         25 labels -> F1 0.644  ( 96.5% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+         50 labels -> F1 0.652  ( 97.7% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        100 labels -> F1 0.664  ( 99.6% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        250 labels -> F1 0.665  ( 99.7% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        500 labels -> F1 0.665  ( 99.8% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+       1000 labels -> F1 0.666  ( 99.9% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+
+  x_iiotid   AUC=0.594  default F1=0.636  oracle F1=0.677  (trivial 0.667, oracle lift +0.011)  <-- DEGENERATE: best threshold == all-attack
+         10 labels -> F1 0.610  (-63.9% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+         25 labels -> F1 0.618  (-45.7% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+         50 labels -> F1 0.653  ( 40.7% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        100 labels -> F1 0.661  ( 59.3% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        250 labels -> F1 0.667  ( 75.0% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        500 labels -> F1 0.675  ( 95.0% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+       1000 labels -> F1 0.675  ( 95.1% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+
+  mqtt_iot_ids2020   AUC=0.979  default F1=0.871  oracle F1=0.962  (trivial 0.667, oracle lift +0.295)
+         10 labels -> F1 0.953  ( 90.0% of the calibration gap; calibrated 20/20 draws)
+         25 labels -> F1 0.962  ( 99.8% of the calibration gap; calibrated 20/20 draws)
+         50 labels -> F1 0.960  ( 97.7% of the calibration gap; calibrated 20/20 draws)
+        100 labels -> F1 0.962  ( 99.9% of the calibration gap; calibrated 20/20 draws)
+        250 labels -> F1 0.962  ( 99.9% of the calibration gap; calibrated 20/20 draws)
+        500 labels -> F1 0.962  ( 99.6% of the calibration gap; calibrated 20/20 draws)
+       1000 labels -> F1 0.962  ( 99.9% of the calibration gap; calibrated 20/20 draws)
+
+  wustl_iiot   AUC=0.347  default F1=0.661  oracle F1=0.667  (trivial 0.667, oracle lift +0.000)  <-- DEGENERATE: best threshold == all-attack
+         10 labels -> F1 0.615  (-768.6% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+         25 labels -> F1 0.593  (-1136.9% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+         50 labels -> F1 0.630  (-525.6% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        100 labels -> F1 0.661  (  1.8% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        250 labels -> F1 0.664  ( 49.5% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        500 labels -> F1 0.666  ( 88.4% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+       1000 labels -> F1 0.666  ( 94.5% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+
+  iot_23   AUC=0.442  default F1=0.657  oracle F1=0.671  (trivial 0.667, oracle lift +0.005)  <-- DEGENERATE: best threshold == all-attack
+         10 labels -> F1 0.629  (-192.9% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+         25 labels -> F1 0.653  (-29.5% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+         50 labels -> F1 0.658  (  6.1% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        100 labels -> F1 0.668  ( 76.7% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        250 labels -> F1 0.670  ( 88.1% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+        500 labels -> F1 0.670  ( 94.1% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+       1000 labels -> F1 0.671  ( 98.1% of the calibration gap; calibrated 20/20 draws) (to a degenerate optimum)
+
+  wrote /Volumes/GOAT-Projects/Projects/IOT-IDS/demo/results/threshold_transfer.csv
+
+  labels needed to recover 80% of the calibration gap:
+    cicddos2019        AUC=0.930  ->  10 labels  (F1 0.885 at 10 -> oracle 0.920, from default 0.410)
+    iotid20            AUC=0.513  ->  n/a: the best achievable threshold IS the all-attack classifier (oracle lift +0.000) — nothing to calibrate toward
+    x_iiotid           AUC=0.594  ->  n/a: the best achievable threshold IS the all-attack classifier (oracle lift +0.011) — nothing to calibrate toward
+    mqtt_iot_ids2020   AUC=0.979  ->  10 labels  (F1 0.953 at 10 -> oracle 0.962, from default 0.871)
+    wustl_iiot         AUC=0.347  ->  n/a: the best achievable threshold IS the all-attack classifier (oracle lift +0.000) — nothing to calibrate toward
+    iot_23             AUC=0.442  ->  n/a: the best achievable threshold IS the all-attack classifier (oracle lift +0.005) — nothing to calibrate toward
+
+  Calibration is a real fix on 2/6 held-out datasets: cicddos2019, mqtt_iot_ids2020.
+  Everywhere else the ranking carries too little signal for an
+  operating point to rescue — that needs domain adaptation, not labels.
+
+GATE PASSED (121 cells). Manifest: /Volumes/GOAT-Projects/Projects/IOT-IDS/demo/results/SFAF_RERUN_MANIFEST.json

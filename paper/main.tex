@@ -8,6 +8,12 @@
 \documentclass[conference]{IEEEtran}
 \IEEEoverridecommandlockouts
 
+\usepackage{iftex}
+\ifXeTeX  % e.g. tectonic: keep IEEE Times; pdfLaTeX/Overleaf are unaffected
+  \usepackage{fontspec}
+  \setmainfont{texgyretermes}[Extension=.otf, UprightFont=*-regular,
+    BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]
+\fi
 \usepackage{cite}
 \usepackage{amsmath,amssymb}
 \usepackage{graphicx}
@@ -91,9 +97,10 @@ attacks raised an incident within 21~s, and the sensor ran for 14.4~h with
 no restart and no interface packet loss. Ordinary home-network traffic,
 however, produced 1.9--2.6 false-alarm incidents per minute, and confidence
 thresholds did not remove them. A post-hoc incident-size rule removed every
-benign incident but also two of the seven attacks. We further report a
-leakage error found in our own earlier cross-dataset study and the
-corrected protocol. The results argue that edge intrusion detectors should
+benign incident but also two of the seven attacks. A corrected
+cross-dataset study over eleven datasets, fixing a leakage
+error in our earlier one, finds a mean area under the receiver operating characteristic curve of
+0.979 within a dataset but 0.497 across datasets. The results argue that edge intrusion detectors should
 be evaluated on representative benign traffic before any accuracy figure is
 reported.
 \end{abstract}
@@ -145,9 +152,11 @@ uninformative, and measure what happens on a live home network: controlled
 attacks are detected, but benign traffic triggers a sustained false-alarm
 rate that confidence thresholds do not remove. We quantify the trade-off of
 a simple incident-size filter.
-\item A corrected cross-dataset protocol over eleven public datasets,
+\item A corrected cross-dataset study over eleven public datasets,
 including a report of the resubstitution error that invalidated our own
-earlier result.
+earlier result. With a held-out diagonal, detectors still transfer at
+chance on average (mean area under the receiver operating characteristic
+curve, ROC-AUC, 0.497).
 \end{enumerate}
 
 Section~\ref{sec:related} reviews related work. Section~\ref{sec:system}
@@ -508,12 +517,71 @@ Our earlier cross-dataset study reported a near-perfect in-domain score and
 a large gap to cross-domain performance. During a code review we found that
 the in-domain cells had been evaluated on the same rows used for training,
 so the in-domain score and the gap were both invalid. We withdrew them and
-re-implemented the protocol of Section~\ref{sec:sfaf}.
-\TBD{Results of the corrected 11-dataset rerun: mean in-domain and
-off-diagonal ROC-AUC and MCC, the $11\times11$ ROC-AUC matrix as a figure,
-and the pooled-training result. Fill from
-demo/results/cross\_dataset\_metrics\_long.csv and
-SFAF\_RERUN\_MANIFEST.json.}
+re-implemented the protocol of Section~\ref{sec:sfaf}. Each dataset
+contributed 50{,}000 flows; each model was trained on 40{,}000 and its
+diagonal cell measured on the remaining 10{,}000.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  width=0.81\columnwidth, height=0.81\columnwidth,
+  enlargelimits=false, axis on top, y dir=reverse, major tick length=0pt,
+  xtick={0,...,10}, ytick={0,...,10},
+  xticklabels={C17,UNSW,TON,BoT,DD19,ID20,XII,MQTT,C23,WUS,I23},
+  yticklabels={C17,UNSW,TON,BoT,DD19,ID20,XII,MQTT,C23,WUS,I23},
+  x tick label style={rotate=90, font=\tiny},
+  y tick label style={font=\tiny},
+  xlabel={Test dataset}, ylabel={Training dataset},
+  label style={font=\scriptsize},
+  colormap={bw}{gray(0cm)=(1); gray(1cm)=(0.5)},
+  point meta min=0, point meta max=1,
+  colorbar, colorbar style={width=2mm, font=\tiny,
+    ytick={0,0.25,0.5,0.75,1}},
+]
+\addplot[matrix plot*, mesh/cols=11, point meta=explicit]
+  table[x=test, y=train, meta=auc] {data/auc_matrix.dat};
+\addplot[only marks, mark=none, point meta=explicit symbolic,
+  nodes near coords, every node near coord/.style={anchor=center,
+    font=\fontsize{5}{6}\selectfont, inner sep=0pt}]
+  table[x=test, y=train, meta=pct] {data/auc_matrix.dat};
+\end{axis}
+\end{tikzpicture}
+\caption{Cross-dataset ROC-AUC ($\times 100$) after the correction. The
+diagonal is measured on a held-out 20\% split; every other cell tests on a
+different dataset. 50 is chance; values below 50 are inverted rankings.
+C17 CICIDS2017, UNSW UNSW-NB15, TON TON\_IoT, BoT Bot-IoT, DD19
+CICDDoS2019, ID20 IoTID20, XII X-IIoTID, MQTT MQTT-IoT-IDS2020, C23
+CIC-IoT-2023, WUS WUSTL-IIoT-2021, I23 IoT-23. BoT has only 11 benign flows
+in its held-out split.}
+\label{fig:auc}
+\end{figure}
+
+Fig.~\ref{fig:auc} shows the corrected matrix. The in-domain cells average
+ROC-AUC 0.979 (median 0.998) and MCC 0.898. The 110 cross-domain cells
+average ROC-AUC 0.497 and MCC $-0.014$, which is chance. The gap of 0.482 is
+close to the withdrawn figure, but it now rests on a held-out diagonal. Of
+the 110 cells, 65 have ROC-AUC at most 0.55, and 50 fall below 0.5, down to
+0.016. These are not random failures: a feature direction that marks
+attacks in one dataset marks benign traffic in another, and the ten other models
+average 0.267 on WUSTL-IIoT. Only four cells reach 0.9, and their MCC is
+at most 0.46, so even these need a new decision threshold. Bot-IoT is
+99.9\% attack traffic, which leaves only 11 benign flows in its held-out
+split; without Bot-IoT on either axis the means are 0.977 in domain and
+0.489 across domains, so it does not change the result.
+
+Pooling five datasets for training (Bot-IoT included, 250{,}000 flows) did
+not close the gap. On the six unseen datasets ROC-AUC ranged from 0.347 to
+0.979: MQTT-IoT-IDS2020 (0.979) and CICDDoS2019 (0.930) transferred, while
+on WUSTL-IIoT and IoT-23 the pooled model flagged 99.5\% and 96.5\% of
+benign flows. Re-fitting the threshold on ten labelled target flows raised
+MCC from 0.300 to 0.764 on CICDDoS2019 and from 0.788 to 0.909 on
+MQTT-IoT-IDS2020 (means of 20 repeats), but no threshold helped on the
+other four, where the ranking itself carries no signal. In leave-one-dataset-out
+training on all eleven datasets, no feature transform that can be exported
+to the microcontroller improved on standard scaling (mean ROC-AUC 0.612).
+A quantile transform reached 0.646, but its lookup tables are too large for
+the C export.
 
 % ---------------------------------------------------------------------
 \section{Discussion}\label{sec:discussion}
@@ -550,7 +618,9 @@ The model was trained on generated traffic only. The live trial used one
 home network, two short benign windows and seven attacks, which is
 evidence of behaviour rather than a statistical estimate of accuracy. The
 floods and the Xmas scan ran over the loopback interface. The soak lasted
-14.4~h rather than 24~h. The incident-size rule was chosen post hoc.
+14.4~h rather than 24~h. The cross-dataset matrix comes from one seed and
+one 50{,}000-flow sample per dataset, so it carries no confidence
+intervals. The incident-size rule was chosen post hoc.
 Packet capture in Python limits throughput under floods. No device other
 than the sensor was protected.
 
@@ -570,7 +640,9 @@ reference model's labels exactly, detected all seven controlled attacks,
 and ran stably for 14.4~h. Its near-perfect synthetic accuracy, however,
 did not predict its behaviour on a real network, where ordinary benign
 traffic produced a sustained false-alarm rate that confidence thresholds
-could not remove. Edge intrusion detectors should therefore be measured on
+could not remove. Across eleven public datasets, the corrected study
+found that a detector trained on one dataset ranks another at chance on
+average. Edge intrusion detectors should therefore be measured on
 representative benign traffic, in false alarms per unit time, before
 accuracy figures are reported or automatic prevention is enabled. The code,
 model, raw measurements and analysis scripts are available in the

@@ -1,0 +1,46 @@
+{
+  "generated": "2026-11-10T06:37:09+0530",
+  "commit": "458c02a84fa6e86fed651bdbacfbab3d2e7e84c7",
+  "dirty": true,
+  "python": "3.10.14",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "versions": {
+    "numpy": "2.2.6",
+    "pandas": "2.3.3",
+    "sklearn": "1.7.2",
+    "xgboost": "3.2.0"
+  },
+  "datasets": [
+    "cicids2017",
+    "unsw_nb15",
+    "ton_iot",
+    "bot_iot",
+    "cicddos2019",
+    "iotid20",
+    "x_iiotid",
+    "mqtt_iot_ids2020",
+    "cic_iot_2023",
+    "wustl_iiot",
+    "iot_23"
+  ],
+  "seed": 42,
+  "args": {
+    "cap": 50000,
+    "transfer_cap": 25000,
+    "repeats": 20
+  },
+  "seconds": {
+    "cross_dataset_eval": 331.4,
+    "transfer_experiment": 236.5,
+    "threshold_transfer": 299.9
+  },
+  "outputs_sha256": {
+    "cross_dataset_metrics_long.csv": "b0207e4e240761f422dd9894e4f87edc9ae08e69442d4739ee585ef6d46ace7c",
+    "cross_dataset_auc_matrix.csv": "4ef69c3f30dd773c8801fe9822d1c68f64d0d3232f3bcec9f7f7059ae4cbf997",
+    "cross_dataset_matrix.csv": "add1fe3972cc6dc92ccf38fdf05ddac63603101d1ab5bef3fa51b7ea00e1448e",
+    "cross_dataset_lift_matrix.csv": "147ee9c097bc28efa19cffbf5b420a6a40c072066e16f0eabe491c02ab550860",
+    "cross_dataset_heldout.csv": "daa7ebbc80ec65c13894c9efeaccefcd000bb706bea79c20f767460d8bf5a92d",
+    "transfer_comparison.csv": "72a2dac07cb88785e2e15db7c2ca4cf52a60d879d9ce45e3d0fbf9df9d59a206",
+    "threshold_transfer.csv": "d46e53d15a944f50f0d767651dba1ac867ba8014df511e255bc4150b57e45168"
+  }
+}

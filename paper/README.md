@@ -14,7 +14,7 @@ committed in this repository. The table at the end lists the source of each.
 **Locally** (TeX Live with `texlive-publishers` and `texlive-science`):
 
 ```bash
-python paper/make_data.py        # regenerate data/soak.dat from the raw soak CSV
+python paper/make_data.py        # regenerate data/soak.dat and data/auc_matrix.dat
 cd paper && latexmk -pdf main.tex
 ```
 
@@ -24,10 +24,6 @@ cd paper && latexmk -pdf main.tex
    near the top of `main.tex`. In that mode, the build stops with an error if
    any `[TBD]` is left.
    - Author e-mails and author order. Confirm the guide's name and initials.
-   - Section V-F, the cross-dataset results. Fill this only after
-     `python code/run_sfaf_rerun.py` passes its gate. Add the 11×11 ROC-AUC
-     matrix as a figure (`demo/results/cross_dataset_auc_matrix.png`), and
-     report the mean in-domain and off-diagonal ROC-AUC and MCC.
    - The repository URL, if the repository is made public. Also complete the
      Acknowledgment.
 2. **Use the venue's own template.** Most IEEE conferences accept this
@@ -49,7 +45,7 @@ cd paper && latexmk -pdf main.tex
 
 - The `conference` class option, two columns, 10 pt. No page numbers, headers
   or footers, because IEEE adds these.
-- The abstract is one paragraph of 233 words (IEEE asks for 150–250), with
+- The abstract is one paragraph of 250 words (IEEE asks for 150–250), with
   no citations, equations or abbreviations left undefined. It is followed by
   Index Terms.
 - Abbreviations are defined at first use (IoT, ML). Units are typeset with
@@ -73,4 +69,4 @@ cd paper && latexmk -pdf main.tex
 | Table IV, benign baselines | `reports/pi2-live-2026-09-30/README.md` §2 and §2b |
 | Fig. 2 and the soak text | `reports/pi2-live-2026-09-30/raw/soak.csv` (via `make_data.py`) |
 | Reboot and IPS sentences | `reports/pi2-live-2026-09-30/README.md` §1 and §4 |
-| Section V-F | `demo/results/cross_dataset_metrics_long.csv` (after the rerun) |
+| Section V-F, Fig. 3 | `demo/results/cross_dataset_metrics_long.csv`, `cross_dataset_auc_matrix.csv` (→ `data/auc_matrix.dat`), `cross_dataset_heldout.csv`, `threshold_transfer.csv`, `transfer_comparison.csv`; run record `SFAF_RERUN_MANIFEST.json` |

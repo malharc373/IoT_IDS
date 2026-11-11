@@ -7,8 +7,8 @@ Submitted by Mahi Patel (612303107), Malhar Falke (612303108), Yugandhar Pise
 Gaikwad, Department of Computer Engineering, COEP Technological University.
 
 > Evidence status: this edition replaces the April 2026 report as the current
-> technical account. Exact cross-dataset SFAF results are withdrawn pending a
-> protocol-correct rerun. Live-model accuracy is validated only on synthetic
+> technical account. The cross-dataset SFAF study was rerun under the corrected
+> protocol on 10 November 2026 (Section 7). Live-model accuracy is validated only on synthetic
 > traffic. Raspberry Pi performance remains unmeasured.
 
 ## Executive summary
@@ -49,12 +49,12 @@ Every result is therefore labelled by evidence scope.
 | Hermetic tests | 67 checks cover parsing, flow state, model loading, IPS, dashboard, data handling, governance, and regressions | Accuracy on real networks |
 | Synthetic held-out scenarios | 70 scenarios held out from training; ONNX and C parity checked | Generalisation beyond the traffic generators |
 | Host benchmarks | ONNX, C, extraction, end-to-end, and memory measurements on Apple Silicon | Raspberry Pi throughput or soak stability |
-| Cross-dataset study | Corrected code and evaluation protocol | Current exact metrics until datasets are remounted and rerun |
+| Cross-dataset study | Corrected protocol, rerun 2026-11-10: in-domain ROC-AUC 0.979, cross-domain 0.497 | That any model here transfers to an unseen network |
 
 The previous exact in-domain AUC, generalisation-gap magnitude, transform
 ranking, and small-label calibration claims are withdrawn. The historical
 off-diagonal result remains qualitative evidence that domain shift is severe,
-but it is not the current full-protocol result.
+and the corrected rerun (Section 7) confirms it.
 
 ## 2. System architecture
 
@@ -208,9 +208,15 @@ single-class calibration draw uses the deployed 0.5 threshold rather than
 being silently omitted; reports show total repeats, calibrated draws, and
 success rate.
 
-The dataset symlink currently points to an unavailable external volume. No
-replacement metric is fabricated. The corrected experiment commands are ready
-for execution after the data mount returns.
+The corrected study was rerun on 10 November 2026 with all eleven datasets
+(`python code/run_sfaf_rerun.py`; 50,000 flows per dataset, seed 42) and
+passed its gate. Held-out in-domain ROC-AUC averaged 0.979 (MCC 0.898), while
+the 110 cross-domain cells averaged 0.497 (MCC -0.014), which is chance; 50 of
+them were below 0.5. Pooled training on five datasets transferred to two of
+six unseen datasets, and ten labelled target flows fixed the threshold on
+those two only. Bot-IoT contributes only about 55 benign flows per sample, so
+its cells are indicative. Full results:
+`demo/results/CROSS_DATASET_FINDINGS.md`.
 
 ## 8. Dataset and dependency supply chain
 
@@ -274,8 +280,8 @@ be archived together for the next academic result set.
 
 - Real labelled packet captures have not yet passed through the complete
   packet-to-feature-to-verdict pipeline.
-- The SFAF study has corrected code but no current protocol-correct metrics
-  because the external dataset volume was unavailable.
+- The SFAF study shows no average cross-dataset transfer (ROC-AUC 0.497);
+  domain adaptation or target-domain training data remains open work.
 - Perfect or near-perfect synthetic performance is not evidence of deployment
   accuracy, concept-drift resilience, or adversarial robustness.
 - Raspberry Pi throughput, packet loss, thermal behavior, and long-run memory
@@ -327,5 +333,5 @@ support a final academic report without reviving the withdrawn claims.
 - `docs/REAL_TRAFFIC_ACCEPTANCE.md` - real-traffic validation protocol.
 - `models/README.md` and `models/live_meta.json` - artifact contracts.
 - `demo/results/BENCHMARK.md` - host measurements and Pi acceptance gate.
-- `demo/results/CROSS_DATASET_FINDINGS.md` - withdrawn-result notice and rerun state.
+- `demo/results/CROSS_DATASET_FINDINGS.md` - corrected rerun results and withdrawn-result history.
 - `deploy/README_PI.md` - target deployment runbook.

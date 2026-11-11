@@ -23,13 +23,11 @@ help stop network attacks on constrained edge hardware*:
 2. **SFAF cross-dataset study** — eleven public IDS datasets (CICIDS2017,
    UNSW-NB15, TON-IoT, Bot-IoT, CIC-IoT-2023, CICDDoS2019, IoTID20, X-IIoTID,
    MQTT-IoT-IDS2020, WUSTL-IIoT, IoT-23) aligned into one 12-feature space to measure —
-   not assert — how well flow behaviour transfers across labs/devices/tools. The
-   last audited off-domain run found severe domain shift, but its diagonal was
-   later found to be resubstitution (train and test were the same rows). The
-   corrected held-out protocol is implemented and its exact headline numbers
-   are intentionally withheld until the external datasets are remounted and the
-   full study is rerun. See
-   [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
+   not assert — how well flow behaviour transfers across labs/devices/tools. An
+   earlier run's diagonal turned out to be resubstitution (train and test were
+   the same rows); the protocol-correct rerun of 10 November 2026 measures
+   held-out in-domain ROC-AUC **0.979** against cross-domain **0.497** (chance).
+   See [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
 ```
    ┌────────────────────────── live detection core ────────────────────────────┐
@@ -329,24 +327,35 @@ innocent devices and the router, so automatic blocking is **not safe to enable**
 with the current model. Full commands, raw evidence and limitations:
 [`reports/pi2-live-2026-09-30/README.md`](reports/pi2-live-2026-09-30/README.md).
 
-### Cross-dataset generalization (protocol corrected; rerun pending)
+### Cross-dataset generalization (corrected rerun, 10 November 2026)
 
 Eleven datasets align to the 12-feature space. The corrected protocol trains on
 a fixed 80% split of each source, tests the diagonal on its untouched 20%, and
 tests off-diagonal cells on independent datasets (`code/cross_dataset_eval.py`). Reported with
 ROC-AUC and MCC rather than F1, because each test set is ~50/50 balanced and a
-classifier that answers "attack" to everything scores F1 = 0.667:
+classifier that answers "attack" to everything scores F1 = 0.667.
 
-The historical run's mean off-diagonal ROC-AUC was 0.509 over 110 ordered
-pairs, but its 0.995 diagonal was measured on training rows. The quoted gap and
-every downstream exact claim are therefore withdrawn; 0.509 is retained only
-as historical evidence that motivated the corrected rerun. Row-retention,
-Bot-IoT sampling, IoT-23 cache invalidation, and small-budget calibration were
-corrected at the same time.
+Rerun with `python code/run_sfaf_rerun.py` (50,000 flows per dataset, seed 42;
+gate passed, 121/121 cells):
 
-The external dataset mount is currently unavailable, so publishing replacement
-numbers would be fabrication. The affected artifacts are quarantined under
-`legacy/resubstitution-results/`; the live status and reproduction gate are in
+| | In-domain (held-out 20%, n = 11) | Cross-domain (n = 110) | Gap |
+|---|---|---|---|
+| ROC-AUC, mean | **0.979** | **0.497** | 0.482 |
+| MCC, mean | 0.898 | −0.014 | 0.911 |
+
+- 50 of 110 cross-domain cells are *below* 0.5 (down to 0.016): rankings
+  invert between labs, they do not just get noisier.
+- Pooled training on five datasets transfers to 2 of 6 unseen ones
+  (MQTT-IoT-IDS2020 0.979, CICDDoS2019 0.930) and fails on the rest (0.347–0.594).
+- Ten labelled target flows fix the threshold on those 2 datasets only.
+- No MCU-exportable feature transform beats plain standard scaling in
+  leave-one-dataset-out training (mean ROC-AUC 0.612).
+- Bot-IoT has only 11 benign flows in its held-out split, so its numbers are
+  indicative; excluding it gives 0.977 vs 0.489.
+
+The earlier run (diagonal 0.995, off-diagonal 0.509) is kept under
+`legacy/resubstitution-results/` as withdrawn historical evidence. Full
+results, run manifest and gate checklist:
 [`demo/results/CROSS_DATASET_FINDINGS.md`](demo/results/CROSS_DATASET_FINDINGS.md).
 
 ### System benchmark (x86 reference host; `python demo/benchmark.py`)

@@ -9,7 +9,9 @@ Gaikwad, Department of Computer Engineering, COEP Technological University.
 > Evidence status: this edition replaces the April 2026 report as the current
 > technical account. The cross-dataset SFAF study was rerun under the corrected
 > protocol on 10 November 2026 (Section 7). Live-model accuracy is validated only on synthetic
-> traffic. Raspberry Pi performance remains unmeasured.
+> traffic; the Raspberry Pi 2 deployment was measured on 30 September 2026 on a
+> real network with real attack tools (Section 9), but no labelled real-traffic
+> accuracy exists yet.
 
 ## Executive summary
 
@@ -33,9 +35,12 @@ direction follows the observed initiator, pcap timing and link types are
 validated, fragments are handled safely, model contracts are machine-checked,
 incident state is bounded, IPS timeouts refresh correctly, dashboard access is
 authenticated, dataset archives fail closed, and development plus Pi
-dependencies are locked. The main unresolved scientific task is to mount the
-public datasets and rerun the corrected protocol. The main deployment task is
-to collect real labelled traffic and benchmark on an actual Raspberry Pi.
+dependencies are locked. The corrected public-dataset study has been rerun and
+shows no average cross-dataset transfer. The Raspberry Pi 2 has been
+benchmarked and run on a live network: it detected all seven controlled
+attacks but raised 1.9-2.6 false-alarm incidents per minute on ordinary home
+traffic. The main remaining task is to collect real labelled traffic, retrain
+on it, and bring that false-alarm rate down.
 
 ## 1. Scope and evidence policy
 
@@ -48,7 +53,8 @@ Every result is therefore labelled by evidence scope.
 |---|---|---|
 | Hermetic tests | 67 checks cover parsing, flow state, model loading, IPS, dashboard, data handling, governance, and regressions | Accuracy on real networks |
 | Synthetic held-out scenarios | 70 scenarios held out from training; ONNX and C parity checked | Generalisation beyond the traffic generators |
-| Host benchmarks | ONNX, C, extraction, end-to-end, and memory measurements on Apple Silicon | Raspberry Pi throughput or soak stability |
+| Host benchmarks | ONNX, C, extraction, end-to-end, and memory measurements on an x86 reference host (`demo/results/BENCHMARK.md`) | Raspberry Pi performance |
+| Raspberry Pi 2 | C-engine parity on 5,000 inputs, benchmark, 7/7 controlled attacks detected, benign false-alarm rate, 14.4 h soak, reboot recovery | Accuracy on labelled real traffic; a full 24 h soak |
 | Cross-dataset study | Corrected protocol, rerun 2026-11-10: in-domain ROC-AUC 0.979, cross-domain 0.497 | That any model here transfers to an unseen network |
 
 The previous exact in-domain AUC, generalisation-gap magnitude, transform
@@ -239,13 +245,29 @@ The publication's audited 14:18 host snapshot measured 11.1 microseconds mean si
 latency, 399,270 flows/s at batch 1024, 1.111 microseconds per flow for the
 native C model, 208,465 packets/s for parse plus aggregation, 51,321 flows/s
 end-to-end on the demo pcap, and 56.6 MB daemon RSS. These are Apple Silicon
-measurements and are not Raspberry Pi results.
+measurements and are not Raspberry Pi results. The current host benchmark
+(`demo/results/BENCHMARK.md`) was regenerated on an x86 reference host with
+every section complete.
 
-Numerical host-to-Pi projection has since been removed: scaling a laptop result
-is not target evidence. The target gate is to run the same benchmark on a
-64-bit Pi whose device tree proves its identity, preserve raw output, exercise
-realistic packet sizes and rates, and complete the 24-hour passive soak in
-`deploy/PI_ACCEPTANCE.md` while watching drops, memory and temperature.
+The Raspberry Pi 2 Model B (32-bit, 4 x Cortex-A7) is the deployment board.
+onnxruntime ships no 32-bit ARM wheels, so the Pi runs the C export of the same
+model; it matched onnxruntime's labels on all 5,000 parity inputs. Measured on
+the board (`reports/pi2-acceptance-2026-09-30/`):
+
+| Measure | Pi 2, C engine |
+|---|---|
+| Single-flow inference, daemon path | 535 us (p99 799 us) |
+| Peak batched inference | 17,506 flows/s (batch 1024) |
+| Packet parse + flow aggregation | 6,758 packets/s |
+| End to end, pcap to verdicts | 1,316 flows/s |
+
+Packet parsing in Python, not the model, is the bottleneck. On a live home
+network (`reports/pi2-live-2026-09-30/`) all seven controlled attacks raised an
+incident within 21 s, but benign traffic produced 1.9-2.6 false-alarm incidents
+per minute, so automatic blocking stays disabled. A 14.4-hour soak ran with no
+restart and no interface drops, CPU temperature 50.3-55.1 C, and memory rising
+from 53.5 to 62.4 MB, mostly in the first seven hours. After a reboot the
+sensor reported a fresh heartbeat in 99 s. A full 24-hour soak is still open.
 
 ## 10. Verification and reproducibility
 
@@ -284,8 +306,11 @@ be archived together for the next academic result set.
   domain adaptation or target-domain training data remains open work.
 - Perfect or near-perfect synthetic performance is not evidence of deployment
   accuracy, concept-drift resilience, or adversarial robustness.
-- Raspberry Pi throughput, packet loss, thermal behavior, and long-run memory
-  stability are unmeasured.
+- The Pi 2 soak lasted 14.4 h, not 24 h, so a slow memory leak is not ruled
+  out; Python packet parsing (about 6.8k packets/s) cannot keep up with a
+  line-rate flood.
+- Benign home traffic triggers 1.9-2.6 false-alarm incidents per minute on the
+  Pi 2, and confidence thresholds do not remove them.
 - Midstream flow direction is necessarily heuristic without a handshake.
 - Ethernet, Linux cooked SLL/SLL2, and radiotap data frames are decoded;
   other capture link types fail safely.
@@ -302,9 +327,11 @@ be archived together for the next academic result set.
 
 | Priority | Development option | Acceptance evidence |
 |---|---|---|
-| P0 | Remount datasets and rerun corrected NxN, LODO, and threshold-transfer studies | Raw result bundle, no train/eval overlap, quality report, reproducible commit |
+| Done | Rerun corrected NxN, LODO, and threshold-transfer studies | `demo/results/SFAF_RERUN_MANIFEST.json`, gate passed 2026-11-10 |
 | P0 | Capture real labelled traffic through the live 22-feature extractor | Grouped device/scenario/time split and per-class error analysis |
-| P1 | Benchmark and soak on Raspberry Pi | Raw benchmark, packet-drop counters, temperature, RSS, incident latency |
+| Done | Benchmark and soak on Raspberry Pi 2 | `reports/pi2-acceptance-2026-09-30/`, `reports/pi2-live-2026-09-30/` (14.4 h soak) |
+| P0 | Cut the benign false-alarm rate on real traffic | False alarms per hour on held-out benign sessions, with attack recall kept |
+| P1 | Complete a 24-hour soak on the Pi 2 | Raw five-minute samples, RSS trend, drops, temperature |
 | Done | Keep research and live feature spaces separate | `docs/ADR-001-FEATURE-SPACES.md`; versioned contracts and daemon rejection tests |
 | P1 | Owner selects a license compatible with code, report, model, and third-party assets | Explicit license file and compatibility review |
 | Done | Add supported Linux cooked and radiotap capture decoders | Format fixtures and parser parity tests |
@@ -319,12 +346,13 @@ unqualified accuracy claims. The live IDS/IPS has a coherent, versioned feature
 contract, verified model exports, safer operations, and strong hermetic test
 coverage. The research pipeline has a corrected evaluation design and explicit
 data-quality accounting. Neither synthetic accuracy nor host speed is presented
-as proof of real-world or Raspberry Pi performance.
+as proof of real-world performance; the Pi 2 is measured directly.
 
-The next defensible milestone is evidence, not another model tweak: rerun the
-public-dataset study without resubstitution, process real labelled packet
-captures end to end, and measure the target Pi directly. Those results can then
-support a final academic report without reviving the withdrawn claims.
+The public-dataset study has been rerun without resubstitution, and the Pi 2
+has been measured on a live network. Both point the same way: models trained on
+one source do not transfer, and the live false-alarm rate is the blocking
+problem. The next milestone is real labelled packet captures processed end to
+end and used for training.
 
 ## Repository references
 

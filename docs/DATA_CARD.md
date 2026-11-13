@@ -33,8 +33,10 @@ for a privacy review of real captures.
   retention, and coverage are reported by the loader
 - **Evaluation:** source diagonals use an untouched 20% split; off-diagonals use
   independent datasets
-- **Current status:** exact results are withheld pending a full corrected rerun
-  from the unavailable external dataset mount
+- **Current status:** corrected rerun completed 2026-11-10 (gate passed);
+  held-out in-domain ROC-AUC 0.979, cross-domain 0.497. Bot-IoT supplies only
+  about 55 benign flows per 50,000-row sample. See
+  `demo/results/CROSS_DATASET_FINDINGS.md`
 
 The supported IoT-23 input is Zeek flow logs rather than raw packet captures.
 It therefore cannot validate the packet-derived 22-feature live model.

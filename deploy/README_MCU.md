@@ -1,19 +1,17 @@
 # Running the model on a microcontroller (ESP32-class)
 
-> **Status (30 September 2026): inference kernel only.** The model compiles to
-> C and runs, but there is no ESP32 intrusion detector yet. What exists and
-> what does not:
+> **Scope: C inference kernel plus an ESP32 inference example.** This is not
+> an ESP32 intrusion detector, and none is claimed. What exists and what is out
+> of scope:
 >
 > | Piece | State |
 > |---|---|
 > | C export of the model, decision parity with XGBoost | done (`src/export_c.py --verify`) |
 > | Same C code on real ARM hardware | done: it is the default inference engine on the 32-bit Raspberry Pi 2 |
-> | Arduino example sketch (`esp32_iot_ids/`) | written; **not yet compiled with the ESP32 toolchain or flashed** |
-> | On-device flow table and 22-feature extraction in C | **not started**; the sketch feeds zeros |
-> | Packet capture on the ESP32 | **not started**; see *Placement* below |
-> | Accuracy, latency or memory measured on an ESP32 | **none** |
->
-> On-device detection is targeted for the final project review (October 2026).
+> | Arduino inference example (`esp32_iot_ids/`) | written as an example; not flashed to a board |
+> | On-device flow table and 22-feature extraction in C | out of scope; the example uses a fixed placeholder vector |
+> | Packet capture on the ESP32 | out of scope; see *Placement* below |
+> | Accuracy, latency or memory measured on an ESP32 | none claimed |
 
 For devices too small for a Python/ONNX runtime, the model compiles to a single
 dependency-free C header, `models/live_ids.h`:

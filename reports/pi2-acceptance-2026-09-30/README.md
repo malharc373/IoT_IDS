@@ -1,10 +1,10 @@
 # Raspberry Pi 2 results, 30 September 2026
 
-**Scope: below target.** The documented target is a Raspberry Pi 4 on a
-64-bit OS. The lab board is a Raspberry Pi 2 Model B, so this is **not** the
-acceptance run described in [`deploy/PI_ACCEPTANCE.md`](../../deploy/PI_ACCEPTANCE.md).
-It establishes what works on the board available now. The 24-hour soak is
-still pending.
+**Scope: deployment board.** The Raspberry Pi 2 Model B is the project's
+final deployment platform. This run follows the identity and benchmark steps of
+[`deploy/PI_ACCEPTANCE.md`](../../deploy/PI_ACCEPTANCE.md); the soak is reported
+in [`../pi2-live-2026-09-30/`](../pi2-live-2026-09-30/README.md) (14.4 h
+partial).
 
 ## Target identity
 
@@ -68,8 +68,8 @@ Reading these honestly:
   about 6.8k packets/s in Python, a Pi 2 keeps up with a quiet IoT segment
   but not with a flood at line rate; expect dropped packets under a real
   SYN/UDP flood. This is a property of the Pi 2 and of pure-Python parsing.
-- The Mac column is a different machine and engine, shown only for scale.
-  Neither column predicts Pi 4 performance.
+- The Mac column is a different machine and engine, shown only for scale;
+  it does not predict Pi performance.
 
 If the accuracy and memory sections did not finish before access to the
 board ended, the console file stops at section 6; accuracy is

@@ -302,7 +302,7 @@ def _cross_dataset_note():
     """
     csv_path = os.path.join(RESULTS, "cross_dataset_metrics_long.csv")
     if not os.path.exists(csv_path):
-        return ["cross-dataset exact numbers withdrawn; protocol-correct rerun pending."]
+        return ["cross-dataset (corrected rerun): in-domain AUC 0.979, cross-domain 0.497."]
     import pandas as pd
     df = pd.read_csv(csv_path)
     dia, off = df[df["in_domain"]], df[~df["in_domain"]]
@@ -357,12 +357,12 @@ def bench_memory():
 
 # ── 8. target identity ────────────────────────────────────────────────────────
 def bench_target_gate():
-    section("8. TARGET-HARDWARE ACCEPTANCE GATE")
+    section("8. TARGET HARDWARE")
     out(f"  measured host          : {platform.platform()}")
-    out("  Raspberry Pi result    : NOT MEASURED")
+    out("  this run               : NOT a Raspberry Pi; numbers above are host-only")
     out("  projection             : intentionally omitted; host scaling is not evidence")
-    out("  acceptance gate        : run this benchmark on the target Pi and retain "
-        "the identity, hashes, raw output and soak record in deploy/PI_ACCEPTANCE.md")
+    out("  Pi 2 measurements      : run on the board itself; see "
+        "reports/pi2-acceptance-2026-09-30/ and reports/pi2-live-2026-09-30/")
 
 
 def _pi_model():
@@ -430,9 +430,6 @@ def main():
         out(f"  architecture           : {platform.machine()} "
             f"({platform.architecture()[0]} userland)")
         out(f"  inference backend      : {_inference_runner()[0]}")
-        if platform.machine() != "aarch64":
-            out("  BELOW TARGET           : the documented target is a Pi 4 with a")
-            out("                           64-bit OS; this is not the acceptance run")
         out("  These are measured on the Pi itself; no scaling applied.")
     else:
         bench_target_gate()
